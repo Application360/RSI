@@ -3,12 +3,12 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, date
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="RSI 10 Strategy Tracker", layout="wide")
 
-st.title("📊 Assistant de Stratégie RSI 10 (Normal)")
+st.title("📊 Assistant de Stratégie RSI 10 (V2 - 1960/2025)")
 st.markdown("""
 Cette application surveille le S&P 500 et d'autres indices en utilisant votre stratégie optimisée : 
 **Achat si RSI ≥ 50** ou **Achat Panique si RSI < 32**.
@@ -17,7 +17,15 @@ Cette application surveille le S&P 500 et d'autres indices en utilisant votre st
 # --- BARRE LATÉRALE (PARAMÈTRES) ---
 st.sidebar.header("⚙️ Paramètres")
 ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
-start_date = st.sidebar.date_input("Date de début backtest", datetime(1970, 1, 1))
+
+# --- MODIFICATION ICI : PLAGE DE DATES ÉTENDUE ---
+start_date = st.sidebar.date_input(
+    "Date de début backtest", 
+    value=date(1960, 1, 1),      # Date par défaut
+    min_value=date(1960, 1, 1),  # Limite basse
+    max_value=date(2025, 12, 31) # Limite haute demandée
+)
+
 fees = st.sidebar.slider("Frais de transaction (%)", 0.0, 0.5, 0.1, step=0.01) / 100
 
 st.sidebar.subheader("Seuils RSI")
@@ -25,8 +33,9 @@ threshold_buy = st.sidebar.number_input("Seuil Achat (Tendance)", value=50)
 threshold_panic = st.sidebar.number_input("Seuil Achat (Panique)", value=32)
 
 # --- MOTEUR DE CALCUL ---
-@st.cache_data # Pour éviter de recharger les données à chaque clic
+@st.cache_data
 def get_data_and_calc(ticker, start, fees, th_buy, th_panic):
+    # On télécharge les données (yfinance gère le format date de streamlit)
     df = yf.download(ticker, start=start, interval="1wk")
     if df.empty: return None
     
@@ -64,7 +73,7 @@ def get_data_and_calc(ticker, start, fees, th_buy, th_panic):
 data = get_data_and_calc(ticker, start_date, fees, threshold_buy, threshold_panic)
 
 if data is not None:
-    # 1. ÉTAT ACTUEL (Dernière ligne)
+    # 1. ÉTAT ACTUEL
     last_rsi = data['rsi'].iloc[-1]
     last_signal = data['signal'].iloc[-1]
     last_price = data['price'].iloc[-1]
@@ -85,12 +94,18 @@ if data is not None:
         else:
             st.warning("POSITION : CASH (ATTENTE)")
 
-    # 2. GRAPHIQUE INTERACTIF (Plotly)
+    # 2. GRAPHIQUE INTERACTIF
     st.subheader("📈 Performance Historique (Échelle Log)")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name="S&P 500", line=dict(color='gray', width=1)))
+    fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name="Indice (Buy & Hold)", line=dict(color='gray', width=1)))
     fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name="Stratégie RSI 10", line=dict(color='green', width=2)))
-    fig.update_layout(yaxis_type="log", template="plotly_white", height=500, margin=dict(l=0, r=0, t=0, b=0))
+    fig.update_layout(
+        yaxis_type="log", 
+        template="plotly_white", 
+        height=500, 
+        hovermode="x unified",
+        margin=dict(l=0, r=0, t=30, b=0)
+    )
     st.plotly_chart(fig, use_container_width=True)
 
     # 3. STATISTIQUES
@@ -105,5 +120,5 @@ if data is not None:
     c3.metric("Nombre de Trades", int(data['trade'].sum()))
 
 else:
-    st.error("Impossible de récupérer les données pour ce ticker.")
+    st.error("Impossible de récupérer les données pour ce symbole.")
   
