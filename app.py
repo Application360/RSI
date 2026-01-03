@@ -3,12 +3,12 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime, date
+from datetime import date
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="RSI 10 Strategy Tracker", layout="wide")
 
-st.title("📊 Assistant de Stratégie RSI 10 (V2 - 1960/2025)")
+st.title("📊 Assistant de Stratégie RSI 10 (1960-2025)")
 st.markdown("""
 Cette application surveille le S&P 500 et d'autres indices en utilisant votre stratégie optimisée : 
 **Achat si RSI ≥ 50** ou **Achat Panique si RSI < 32**.
@@ -18,7 +18,7 @@ Cette application surveille le S&P 500 et d'autres indices en utilisant votre st
 st.sidebar.header("⚙️ Paramètres")
 ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
 
-# Ce bloc remplace l'ancien pour débloquer le calendrier de 1960 à 2025
+# --- LE CALENDRIER CORRIGÉ (1960 à 2025) ---
 start_date = st.sidebar.date_input(
     "Date de début backtest", 
     value=date(1960, 1, 1),
@@ -35,17 +35,18 @@ threshold_panic = st.sidebar.number_input("Seuil Achat (Panique)", value=32)
 # --- MOTEUR DE CALCUL ---
 @st.cache_data
 def get_data_and_calc(ticker, start, fees, th_buy, th_panic):
-    # On télécharge les données (yfinance gère le format date de streamlit)
+    # Téléchargement des données hebdomadaires
     df = yf.download(ticker, start=start, interval="1wk")
     if df.empty: return None
     
+    # Nettoyage des colonnes (pour les versions récentes de yfinance)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     
     df = df[['Close']].copy()
     df.columns = ['price']
     
-    # RSI Normal (SMA)
+    # Calcul du RSI 10 (Moyenne Mobile Simple)
     delta = df['price'].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -54,11 +55,11 @@ def get_data_and_calc(ticker, start, fees, th_buy, th_panic):
     rs = avg_gain / avg_loss
     df['rsi'] = 100 - (100 / (1 + rs))
     
-    # Signaux
+    # Signaux de stratégie
     df['signal'] = 0
     df.loc[(df['rsi'] >= th_buy) | (df['rsi'] < th_panic), 'signal'] = 1
     
-    # Performance
+    # Rendements et Performance
     df['mkt_ret'] = df['price'].pct_change()
     df['strat_ret_raw'] = df['signal'].shift(1) * df['mkt_ret']
     df['trade'] = df['signal'].diff().fillna(0).abs()
@@ -97,7 +98,7 @@ if data is not None:
     # 2. GRAPHIQUE INTERACTIF
     st.subheader("📈 Performance Historique (Échelle Log)")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name="Indice (Buy & Hold)", line=dict(color='gray', width=1)))
+    fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name="Indice (B&H)", line=dict(color='gray', width=1)))
     fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name="Stratégie RSI 10", line=dict(color='green', width=2)))
     fig.update_layout(
         yaxis_type="log", 
@@ -120,5 +121,4 @@ if data is not None:
     c3.metric("Nombre de Trades", int(data['trade'].sum()))
 
 else:
-    st.error("Impossible de récupérer les données pour ce symbole.")
-  
+    st.error("Données indisponibles. Yahoo Finance n'a peut-être pas d'historique aussi ancien pour ce symbole.")
