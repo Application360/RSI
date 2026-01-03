@@ -18,12 +18,12 @@ Cette application surveille le S&P 500 et d'autres indices en utilisant votre st
 st.sidebar.header("⚙️ Paramètres")
 ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
 
-# --- MODIFICATION ICI : PLAGE DE DATES ÉTENDUE ---
+# Ce bloc remplace l'ancien pour débloquer le calendrier de 1960 à 2025
 start_date = st.sidebar.date_input(
     "Date de début backtest", 
-  value=date(1960, 1, 1),      # Date affichée par défaut au chargement
-    min_value=date(1960, 1, 1),  # Limite minimum (Bloqué avant 1960)
-    max_value=date(2025, 12, 31) # Limite maximum (Bloqué après 2025)
+    value=date(1960, 1, 1),
+    min_value=date(1960, 1, 1),
+    max_value=date(2025, 12, 31)
 )
 
 fees = st.sidebar.slider("Frais de transaction (%)", 0.0, 0.5, 0.1, step=0.01) / 100
