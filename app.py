@@ -32,7 +32,7 @@ with col_d1:
 with col_d2:
     end_date = st.date_input(
         "Date de fin", 
-        value=date.today(), # Par défaut aujourd'hui
+        value=date(2025, 12, 31),
         min_value=date(1960, 1, 1),
         max_value=date(2025, 12, 31)
     )
