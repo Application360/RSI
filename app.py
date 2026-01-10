@@ -119,44 +119,64 @@ else:
         fig.update_layout(yaxis_type="log", template="plotly_white", height=500, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-       # MÉTRIQUES & RATIO DE SHARPE
-        st.subheader("📊 Résultats du Backtest & Risque")
+      # --- (On reprend juste après l'affichage du graphique) ---
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- NOUVELLE SECTION : MÉTRIQUES COMPARATIVES & RISQUE ---
+        st.subheader("📊 Comparaison : Stratégie vs Indice (Buy & Hold)")
         
-        # Calculs financiers
-        total_ret = (data['cum_strat'].iloc[-1] - 1) * 100
-        peak = data['cum_strat'].cummax()
-        max_dd = ((data['cum_strat'] - peak) / peak).min() * 100
+        # 1. Fonction interne pour calculer le Max Drawdown
+        def calc_max_drawdown(cum_series):
+            peak = cum_series.cummax()
+            drawdown = (cum_series - peak) / peak
+            return drawdown.min() * 100
+
+        # 2. Calculs des rendements totaux
+        ret_strat = (data['cum_strat'].iloc[-1] - 1) * 100
+        ret_mkt = (data['cum_mkt'].iloc[-1] - 1) * 100
         
-        # Sharpe Ratio (Annualisé - 52 semaines)
+        # 3. Calculs des Max Drawdowns
+        mdd_strat = calc_max_drawdown(data['cum_strat'])
+        mdd_mkt = calc_max_drawdown(data['cum_mkt'])
+        
+        # 4. Calculs des Ratios de Sharpe (Annualisés)
         rf = 0.02  # Taux sans risque (2%)
         
-        # Pour la stratégie
-        strat_mean = data['net_ret'].mean() * 52
         strat_std = data['net_ret'].std() * np.sqrt(52)
+        strat_mean = data['net_ret'].mean() * 52
         sharpe_strat = (strat_mean - rf) / strat_std if strat_std != 0 else 0
         
-        # Pour le marché (Indice)
-        mkt_mean = data['mkt_ret'].mean() * 52
         mkt_std = data['mkt_ret'].std() * np.sqrt(52)
+        mkt_mean = data['mkt_ret'].mean() * 52
         sharpe_mkt = (mkt_mean - rf) / mkt_std if mkt_std != 0 else 0
+
+        # --- AFFICHAGE EN COLONNES ---
+        col_a, col_b, col_c = st.columns(3)
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Performance Totale", f"{total_ret:,.2f} %")
-        c2.metric("Max Drawdown", f"{max_dd:.2f} %")
-        c3.metric("Nombre de Trades", int(data['trade'].sum()))
-        
+        with col_a:
+            st.write("**Performance Totale**")
+            st.metric("Ma Stratégie", f"{ret_strat:,.2f} %", delta=f"{ret_strat - ret_mkt:.2f} % vs Indice")
+            st.metric(f"Indice ({ticker})", f"{ret_mkt:,.2f} %")
+            
+        with col_b:
+            st.write("**Risque (Max Drawdown)**")
+            # Un delta positif ici signifie que le DD est moins profond (meilleur) que l'indice
+            st.metric("DD Stratégie", f"{mdd_strat:.2f} %", delta=f"{mdd_strat - mdd_mkt:.2f} % pts")
+            st.metric(f"DD Indice ({ticker})", f"{mdd_mkt:.2f} %")
+
+        with col_c:
+            st.write("**Efficacité (Sharpe)**")
+            st.metric("Sharpe Stratégie", f"{sharpe_strat:.2f}", delta=f"{sharpe_strat - sharpe_mkt:.2f}")
+            st.metric("Sharpe Indice", f"{sharpe_mkt:.2f}")
+
         st.write("---")
-        st.markdown("### ⚖️ Analyse du Risque (Ratio de Sharpe)")
-        s1, s2, s3 = st.columns(3)
-        # CORRECTION ICI : utilisation de :.2f au lieu de :.2d
-        s1.metric("Sharpe Stratégie", f"{sharpe_strat:.2f}")
-        s2.metric("Sharpe Indice", f"{sharpe_mkt:.2f}")
+        st.write(f"**Nombre de Trades effectués :** {int(data['trade'].sum())}")
         
-        delta_sharpe = sharpe_strat - sharpe_mkt
-        if delta_sharpe > 0:
-            st.success(f"✅ La stratégie est plus performante par rapport au risque que l'indice (Diff: +{delta_sharpe:.2f})")
+        # Petit message d'analyse automatique
+        if mdd_strat > mdd_mkt:
+            st.success(f"✅ Protection : La stratégie a réduit le risque de baisse de {abs(mdd_strat - mdd_mkt):.2f} points par rapport à l'indice.")
         else:
-            st.warning(f"⚠️ L'indice passif offre un meilleur rapport rendement/risque sur cette période (Diff: {delta_sharpe:.2f})")
+            st.warning("⚠️ Attention : La stratégie présente un risque de baisse (Drawdown) plus important que l'indice passif.")
 
     else:
         st.error("Aucune donnée trouvée pour cette période.")
