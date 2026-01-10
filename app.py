@@ -141,10 +141,17 @@ else:
         c3.metric("Nombre de Trades", int(data['trade'].sum()))
         
         st.write("---")
+        st.markdown("### ⚖️ Analyse du Risque (Ratio de Sharpe)")
         s1, s2, s3 = st.columns(3)
-        s1.metric("Sharpe Stratégie", f"{sharpe_strat:.2d}")
-        s2.metric("Sharpe Indice", f"{sharpe_mkt:.2d}")
-        s3.write(f"**Interprétation :** {'✅ La stratégie améliore le rendement/risque' if sharpe_strat > sharpe_mkt else '⚠️ L\'indice passif est plus efficace sur cette période'}")
+        # CORRECTION ICI : utilisation de :.2f au lieu de :.2d
+        s1.metric("Sharpe Stratégie", f"{sharpe_strat:.2f}")
+        s2.metric("Sharpe Indice", f"{sharpe_mkt:.2f}")
+        
+        delta_sharpe = sharpe_strat - sharpe_mkt
+        if delta_sharpe > 0:
+            st.success(f"✅ La stratégie est plus performante par rapport au risque que l'indice (Diff: +{delta_sharpe:.2f})")
+        else:
+            st.warning(f"⚠️ L'indice passif offre un meilleur rapport rendement/risque sur cette période (Diff: {delta_sharpe:.2f})")
 
     else:
         st.error("Aucune donnée trouvée pour cette période.")
