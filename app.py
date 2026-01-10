@@ -114,15 +114,37 @@ else:
         fig.update_layout(yaxis_type="log", template="plotly_white", height=500, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        # MÉTRIQUES
-        st.subheader("📊 Résultats du Backtest")
+       # MÉTRIQUES & RATIO DE SHARPE
+        st.subheader("📊 Résultats du Backtest & Risque")
+        
+        # Calculs financiers
         total_ret = (data['cum_strat'].iloc[-1] - 1) * 100
         peak = data['cum_strat'].cummax()
         max_dd = ((data['cum_strat'] - peak) / peak).min() * 100
+        
+        # Sharpe Ratio (Annualisé - 52 semaines)
+        rf = 0.02  # Taux sans risque (2%)
+        
+        # Pour la stratégie
+        strat_mean = data['net_ret'].mean() * 52
+        strat_std = data['net_ret'].std() * np.sqrt(52)
+        sharpe_strat = (strat_mean - rf) / strat_std if strat_std != 0 else 0
+        
+        # Pour le marché (Indice)
+        mkt_mean = data['mkt_ret'].mean() * 52
+        mkt_std = data['mkt_ret'].std() * np.sqrt(52)
+        sharpe_mkt = (mkt_mean - rf) / mkt_std if mkt_std != 0 else 0
         
         c1, c2, c3 = st.columns(3)
         c1.metric("Performance Totale", f"{total_ret:,.2f} %")
         c2.metric("Max Drawdown", f"{max_dd:.2f} %")
         c3.metric("Nombre de Trades", int(data['trade'].sum()))
+        
+        st.write("---")
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Sharpe Stratégie", f"{sharpe_strat:.2d}")
+        s2.metric("Sharpe Indice", f"{sharpe_mkt:.2d}")
+        s3.write(f"**Interprétation :** {'✅ La stratégie améliore le rendement/risque' if sharpe_strat > sharpe_mkt else '⚠️ L\'indice passif est plus efficace sur cette période'}")
+
     else:
         st.error("Aucune donnée trouvée pour cette période.")
