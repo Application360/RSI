@@ -80,6 +80,11 @@ def get_data_and_calc(ticker, start, end, fees, th_buy, th_panic):
     
     return df
 
+def calc_max_drawdown(cum_series):
+    peak = cum_series.cummax()
+    drawdown = (cum_series - peak) / peak
+    return drawdown.min() * 100
+
 # --- EXÉCUTION ---
 # Vérification de sécurité pour les dates
 if start_date >= end_date:
