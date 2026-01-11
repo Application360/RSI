@@ -23,7 +23,7 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Sectoriel avec Filtre de Tendance MM")
+    st.title("🚀 Momentum Sectoriel & Market Timing")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -36,8 +36,10 @@ def run_momentum_pure():
         fees_pct = st.slider("Frais par transaction (%)", 0.0, 1.0, 0.1, step=0.05) / 100
         
         st.divider()
-        st.header("🛡️ Protection (Market Timing)")
-        sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 0, 250, 150)
+        st.header("🛡️ Protection")
+        # NOUVEAU : Case à cocher pour activer/désactiver le filtre
+        use_market_timing = st.checkbox("Activer le filtre de tendance (MM)", value=True)
+        sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150, disabled=not use_market_timing)
         
         st.divider()
         start_date = st.date_input("Date de début", value=date(1999, 1, 1))
@@ -77,14 +79,15 @@ def run_momentum_pure():
                 monthly_fees = 0
                 dt_now = monthly_close.index[i]
                 
-                # --- FIX BUG TIMESTAMP ---
+                # --- GESTION DU FILTRE MM ---
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
                 price_spy = close_data['SPY'].iloc[idx_ref]
                 val_sma = spy_sma.iloc[idx_ref]
+                
+                # Si le filtre est désactivé, on considère que le marché est toujours "Bull"
+                is_market_bull = (price_spy > val_sma) if use_market_timing else True
 
                 if (i - valid_start_idx) % holding_period == 0:
-                    is_market_bull = price_spy > val_sma
-                    
                     if is_market_bull:
                         scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                         new_top = scores.index[:n_top].tolist()
@@ -97,15 +100,18 @@ def run_momentum_pure():
                             monthly_fees = fees_pct
                         current_top = new_top
                     else:
+                        # Cas de sortie en cash (uniquement si use_market_timing est True)
                         if current_top:
                             portfolio_changes += len(current_top)
                             monthly_fees = fees_pct
                         current_top = []
 
+                # --- CALCUL RENDEMENT ---
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
+                    
                     gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top if current_top else 0.0
                     spy_ret = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
                     history.append({'Date': monthly_close.index[i+1], 'Strat': gross_ret - monthly_fees, 'SPY': spy_ret})
@@ -119,10 +125,10 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Strat'])
         m_b = calculate_metrics(df['SPY'])
 
-        # --- DESIGN DES MÉTRIQUES SUPERPOSÉES ---
-        st.subheader(f"📊 Métriques Net de Frais (MM {sma_period}j)")
+        # --- AFFICHAGE MÉTRIQUES ---
+        title_suffix = f"(MM {sma_period}j)" if use_market_timing else "(Sans filtre)"
+        st.subheader(f"📊 Métriques Net de Frais {title_suffix}")
 
-        # Bloc Ma Stratégie
         st.markdown("### 🔹 Ma Stratégie")
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("CAGR Net", f"{m_s[0]*100:.2f}%")
@@ -133,43 +139,40 @@ def run_momentum_pure():
         
         st.markdown("---")
 
-        # Bloc S&P 500
         st.markdown("### 🔸 S&P 500 (Benchmark)")
         b1, b2, b3, b4, b5 = st.columns(5)
         b1.metric("CAGR", f"{m_b[0]*100:.2f}%")
         b2.metric("Ratio Sharpe", f"{m_b[2]:.2f}")
         b3.metric("Max Drawdown", f"{m_b[3]*100:.2f}%")
         b4.metric("Volatilité", f"{m_b[1]*100:.2f}%")
-        b5.write("") # Espace vide pour l'alignement
+        b5.write("")
 
         st.divider()
-        
-        # --- GRAPHIQUES ---
         st.subheader("📈 Performance Cumulée")
         st.line_chart((1 + df[['Strat', 'SPY']]).cumprod() * 100)
 
-        # --- TABLEAU ANNUEL ---
         st.subheader("📅 Détail Annuel")
         annual = df.groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
         annual['Alpha'] = annual['Strat'] - annual['SPY']
         st.table(annual.sort_index(ascending=False).style.format("{:.2%}"))
 
-        # --- ÉTAT ACTUEL & SECTEURS ---
+        # --- ÉTAT ACTUEL ---
         st.divider()
         st.subheader("🎯 État actuel du portefeuille")
-        
-        # On recalcule les secteurs les plus récents pour l'affichage final
         latest_momentum = momentum.iloc[-1].dropna().sort_values(ascending=False)
         top_now = latest_momentum.index[:n_top].tolist()
         
-        is_bull = close_data['SPY'].iloc[-1] > spy_sma.iloc[-1]
-        
-        if is_bull:
-            st.success(f"✅ MARCHÉ HAUSSIER (SPY > MM{sma_period})")
-            st.info(f"🚀 **Secteurs à détenir actuellement :** {', '.join(top_now)}")
+        # Logique d'affichage finale
+        if not use_market_timing:
+            st.info(f"ℹ️ Filtre MM désactivé. Secteurs leaders à détenir : **{', '.join(top_now)}**")
         else:
-            st.error(f"⚠️ MARCHÉ BAISSIER (SPY < MM{sma_period})")
-            st.warning("🛡️ **POSITION ACTUELLE : CASH (0% exposition)**")
+            is_bull = close_data['SPY'].iloc[-1] > spy_sma.iloc[-1]
+            if is_bull:
+                st.success(f"✅ MARCHÉ HAUSSIER (SPY > MM{sma_period})")
+                st.info(f"🚀 **Secteurs à détenir :** {', '.join(top_now)}")
+            else:
+                st.error(f"⚠️ MARCHÉ BAISSIER (SPY < MM{sma_period})")
+                st.warning("🛡️ **POSITION ACTUELLE : CASH**")
 
     except Exception as e:
         st.error(f"Erreur technique : {e}")
