@@ -23,7 +23,7 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Sectoriel : Analytics Avancés")
+    st.title("🚀 Momentum Sectoriel : Stratégie & Holding")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -32,11 +32,13 @@ def run_momentum_pure():
         st.header("⚙️ Paramètres")
         n_top = st.slider("Nombre de secteurs à détenir", 1, 5, 3)
         lookback = st.slider("Période d'analyse (Look-back en mois)", 1, 12, 3)
+        # NOUVEAU : Durée de détention
+        holding_period = st.slider("Durée de détention (Holding en mois)", 1, 12, 1)
         
         start_date = st.date_input("Date de début", value=date(1999, 1, 1), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
         end_date = st.date_input("Date de fin", value=date(2026, 12, 31), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
         st.divider()
-        st.info(f"Analyse : Top {n_top} secteurs / Look-back {lookback}m")
+        st.info(f"Analyse : Top {n_top} / Look-back {lookback}m / Holding {holding_period}m")
 
     if start_date >= end_date:
         st.error("La date de début doit être antérieure à la date de fin.")
@@ -59,7 +61,7 @@ def run_momentum_pure():
             
             history = []
             portfolio_changes = 0
-            previous_top = []
+            current_top = []
             
             start_dt = pd.to_datetime(start_date)
             valid_start_idx = lookback
@@ -68,30 +70,35 @@ def run_momentum_pure():
                     valid_start_idx = j
                     break
 
+            # --- LOGIQUE DE BACKTEST AVEC HOLDING PERIOD ---
             for i in range(valid_start_idx, len(monthly_close) - 1):
-                scores = momentum.iloc[i].dropna().sort_values(ascending=False)
-                if len(scores) < n_top: continue
+                # On ne change de portefeuille que si on est sur un multiple de holding_period
+                # ou si c'est le tout premier mois d'investissement
+                if (i - valid_start_idx) % holding_period == 0:
+                    scores = momentum.iloc[i].dropna().sort_values(ascending=False)
+                    if len(scores) < n_top: continue
+                    
+                    new_top = scores.index[:n_top].tolist()
+                    
+                    # Calcul des transactions
+                    if current_top:
+                        new_entries = len([s for s in new_top if s not in current_top])
+                        portfolio_changes += new_entries
+                    else:
+                        portfolio_changes += n_top # Premier achat
+                    
+                    current_top = new_top
                 
-                current_top = scores.index[:n_top].tolist()
-                
-                # --- CALCUL DES TRANSACTIONS ---
-                if previous_top:
-                    # On compte combien de nouveaux secteurs entrent dans le portefeuille
-                    new_entries = len([s for s in current_top if s not in previous_top])
-                    portfolio_changes += new_entries
-                else:
-                    # Premier investissement : on compte n_top transactions
-                    portfolio_changes += n_top
-                
-                previous_top = current_top
-                
+                # Calcul de la performance du mois pour les secteurs actuellement en portefeuille
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
-                    m_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
-                    s_ret = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
-                    history.append({'Date': monthly_close.index[i+1], 'Strat': m_ret, 'SPY': s_ret})
+                    
+                    strat_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
+                    spy_ret = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
+                    
+                    history.append({'Date': monthly_close.index[i+1], 'Strat': strat_ret, 'SPY': spy_ret})
                 except: continue
 
         if not history:
@@ -102,34 +109,29 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Strat'])
         m_b = calculate_metrics(df['SPY'])
 
-        # --- AFFICHAGE DES RÉSULTATS ---
-        st.subheader(f"📊 Performance & Activité")
+        # --- DASHBOARD ---
+        st.subheader(f"📊 Performance & Analytics (Holding : {holding_period} mois)")
         
-        # Ajout d'une 5ème colonne pour les transactions
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("CAGR Stratégie", f"{m_s[0]*100:.2f}%")
         c2.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
         c3.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
         c4.metric("Total Return", f"{m_s[4]*100:.1f}%")
-        # Affichage du nombre total de transactions
-        c5.metric("Transactions Totales", f"{portfolio_changes}", help="Nombre total d'achats effectués (rebalancements inclus)")
+        c5.metric("Transactions", f"{portfolio_changes}")
 
         st.line_chart((1 + df).cumprod() * 100)
 
-        # Tableau récapitulatif
         st.table(pd.DataFrame({
-            'Métrique': ['Rendement Annuel', 'Ratio Sharpe', 'Max Drawdown', 'Transactions Totales', 'Moyenne Transac./an'],
+            'Métrique': ['CAGR', 'Sharpe', 'Max Drawdown', 'Transactions', 'Transac./an'],
             'Stratégie': [f"{m_s[0]*100:.2f}%", f"{m_s[2]:.2f}", f"{m_s[3]*100:.2f}%", portfolio_changes, round(portfolio_changes / (len(df)/12), 1)],
             'S&P 500': [f"{m_b[0]*100:.2f}%", f"{m_b[2]:.2f}", f"{m_b[3]*100:.2f}%", "-", "-"]
         }))
 
         # Signaux actuels
         st.divider()
-        st.subheader("🎯 Signaux actuels")
-        last_m = momentum.iloc[-1].sort_values(ascending=False)
-        top_now = last_m.index[:n_top].tolist()
+        st.subheader("🎯 Secteurs détenus actuellement")
         scols = st.columns(n_top)
-        for idx, t in enumerate(top_now):
+        for idx, t in enumerate(current_top):
             scols[idx].success(f"Position {idx+1} : **{t}**")
 
     except Exception as e:
