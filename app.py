@@ -12,7 +12,7 @@ st.set_page_config(page_title="RSI Custom Strategy Tracker", layout="wide")
 st.sidebar.header("⚙️ Paramètres")
 ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
 
-# --- NOUVELLE LIGNE : CHOIX DE LA PÉRIODE RSI ---
+# CHOIX DE LA PÉRIODE RSI
 rsi_period = st.sidebar.slider("Période du RSI (Fenêtre)", min_value=2, max_value=30, value=10)
 
 st.title(f"📊 Comparaison : Stratégie RSI {rsi_period} vs Indice")
@@ -33,7 +33,7 @@ st.sidebar.subheader("Seuils RSI")
 threshold_buy = st.sidebar.number_input("Seuil Achat (Tendance)", value=50)
 threshold_panic = st.sidebar.number_input("Seuil Achat (Panique)", value=32)
 
-# --- FONCTIONS DE CALCUL MODIFIÉE ---
+# --- FONCTIONS DE CALCUL ---
 @st.cache_data
 def get_data_and_calc(ticker, start, end, fees, th_buy, th_panic, period):
     df = yf.download(ticker, start=start, end=end, interval="1wk")
@@ -45,7 +45,7 @@ def get_data_and_calc(ticker, start, end, fees, th_buy, th_panic, period):
     df = df[['Close']].copy()
     df.columns = ['price']
     
-    # Calcul RSI avec la période choisie
+    # Calcul RSI
     delta = df['price'].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -77,7 +77,6 @@ def calc_max_drawdown(cum_series):
 if start_date >= end_date:
     st.error("Erreur : La date de début doit être antérieure à la date de fin.")
 else:
-    # On passe 'rsi_period' à la fonction
     data = get_data_and_calc(ticker, start_date, end_date, fees, threshold_buy, threshold_panic, rsi_period)
 
     if data is not None:
@@ -108,13 +107,17 @@ else:
         mdd_strat = calc_max_drawdown(data['cum_strat'])
         mdd_mkt = calc_max_drawdown(data['cum_mkt'])
         
+        # AJOUT : VOLATILITÉ ANNUALISÉE (std * racine de 52 semaines)
+        vol_strat = data['net_ret'].std() * np.sqrt(52) * 100
+        vol_mkt = data['mkt_ret'].std() * np.sqrt(52) * 100
+        
         rf = 0.02
         sharpe_strat = ((data['net_ret'].mean() * 52) - rf) / (data['net_ret'].std() * np.sqrt(52)) if data['net_ret'].std() != 0 else 0
         sharpe_mkt = ((data['mkt_ret'].mean() * 52) - rf) / (data['mkt_ret'].std() * np.sqrt(52)) if data['mkt_ret'].std() != 0 else 0
 
         # 4. AFFICHAGE DES RÉSULTATS COMPARATIFS
         st.subheader(f"📊 Résultats : Stratégie RSI {rsi_period} vs Indice")
-        col_a, col_b, col_c = st.columns(3)
+        col_a, col_b, col_c, col_d = st.columns(4) # Ajout d'une 4ème colonne
         
         with col_a:
             st.write("**Performance Totale**")
@@ -130,6 +133,11 @@ else:
             st.write("**Efficacité (Sharpe)**")
             st.metric("Sharpe Stratégie", f"{sharpe_strat:.2f}", delta=f"{sharpe_strat - sharpe_mkt:.2f}")
             st.metric("Sharpe Indice", f"{sharpe_mkt:.2f}")
+
+        with col_d:
+            st.write("**Volatilité Annualisée**")
+            st.metric("Vol Stratégie", f"{vol_strat:.2f} %", delta=f"{vol_strat - vol_mkt:.2f} %", delta_color="inverse")
+            st.metric("Vol Indice", f"{vol_mkt:.2f} %")
 
         st.write("---")
         st.write(f"**Nombre de Trades :** {int(data['trade'].sum())}")
