@@ -23,7 +23,7 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Couleurs Synchronisées & Analyse de Risque")
+    st.title("🚀 Momentum Pro : Analyse Long Terme 1999-2026")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -41,11 +41,28 @@ def run_momentum_pure():
         sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150, disabled=not use_market_timing)
         
         st.divider()
-        start_date = st.date_input("Date de début", value=date(1999, 1, 1))
-        end_date = st.date_input("Date de fin", value=date(2026, 12, 31))
+        st.header("📅 Période d'Analyse")
+        
+        # Configuration des limites de dates (1999 à 2026)
+        min_date = date(1999, 1, 1)
+        max_date = date(2026, 12, 31)
+        
+        start_date = st.date_input(
+            "Date de début", 
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date
+        )
+        end_date = st.date_input(
+            "Date de fin", 
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date
+        )
 
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
+        # On télécharge un peu avant la date de début pour le calcul de la MM et du Momentum
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 60)
         data = yf.download(sectors + ['SPY'], start=margin_start, end=e_date, progress=False)
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
@@ -56,7 +73,7 @@ def run_momentum_pure():
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Synchronisation des données...'):
+        with st.spinner('Chargement de l\'historique complet...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
@@ -84,6 +101,7 @@ def run_momentum_pure():
                 val_sma = spy_sma.iloc[idx_ref]
                 market_is_bull = (price_spy > val_sma) if use_market_timing else True
 
+                # Rotation lente (Secteurs)
                 if (i - valid_start_idx) % holding_period == 0:
                     scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     new_top = scores.index[:n_top].tolist()
@@ -93,6 +111,7 @@ def run_momentum_pure():
                         monthly_fees += (num_changes / n_top) * fees_pct
                     current_top = new_top
 
+                # Sécurité mensuelle (Entrée/Sortie Cash)
                 if market_is_bull and not is_invested:
                     is_invested = True
                     portfolio_changes += len(current_top)
@@ -119,7 +138,7 @@ def run_momentum_pure():
         m_b = calculate_metrics(df['S&P 500'])
 
         # --- DASHBOARD ---
-        st.subheader("📊 Métriques Comparatives")
+        st.subheader("📊 Comparaison des Performances")
         
         c1, c2 = st.columns(2)
         with c1:
@@ -145,13 +164,12 @@ def run_momentum_pure():
 
         st.divider()
 
-        # --- GRAPHIQUES AVEC COULEURS FIXES ---
-        # Définition des couleurs : Stratégie = Bleu (#0077b6), SP500 = Orange (#f39c12)
+        # --- GRAPHIQUES ---
         chart_colors = ["#0077b6", "#f39c12"]
 
         g1, g2 = st.columns(2)
         with g1:
-            st.subheader("📈 Performance Cumulée (Base 100)")
+            st.subheader("📈 Performance Cumulée")
             cum_perf = (1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100
             st.line_chart(cum_perf, color=chart_colors)
 
@@ -163,10 +181,8 @@ def run_momentum_pure():
             dd_df = pd.DataFrame({
                 'Ma Stratégie': dd_strat,
                 'S&P 500': dd_spy,
-                'Seuil Bear Market (-20%)': -20 # Ajout d'une ligne de référence
+                'Seuil Bear Market (-20%)': -20
             })
-            
-            # On utilise 3 couleurs ici : Bleu, Orange et Rouge pour le seuil
             st.line_chart(dd_df, color=["#0077b6", "#f39c12", "#e74c3c"])
 
         # --- TABLEAU ANNUEL ---
@@ -184,11 +200,11 @@ def run_momentum_pure():
 
         # --- ÉTAT ACTUEL ---
         st.divider()
-        st.subheader(f"🎯 Signal Actuel")
+        st.subheader(f"🎯 État Actuel du Système")
         if is_invested:
-            st.success(f"✅ MARCHÉ BULL : Investi dans {', '.join(current_top)}")
+            st.success(f"✅ SIGNAL : INVESTI - Secteurs : {', '.join(current_top)}")
         else:
-            st.error(f"🛡️ MARCHÉ BEAR : Position 100% Cash")
+            st.error(f"🛡️ SIGNAL : CASH - Le marché est sous sa Moyenne Mobile")
 
     except Exception as e:
         st.error(f"Erreur technique : {e}")
