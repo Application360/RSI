@@ -10,20 +10,21 @@ st.set_page_config(page_title="Momentum Analytics Pro", layout="wide")
 def calculate_metrics(returns):
     """Calcule les métriques de performance de manière sécurisée"""
     if returns.empty:
-        return 0, 0, 0, 0, 0
+        return 0, 0, 0, 0, 0, 0
     total_return = (returns + 1).prod() - 1
     days = (returns.index[-1] - returns.index[0]).days
     n_years = max(days / 365.25, 0.1)
     
     cagr = (total_return + 1) ** (1 / n_years) - 1
+    # Calcul de la volatilité annualisée
     vol = returns.std() * np.sqrt(12)
-    sharpe = (cagr) / vol if vol > 0 else 0
+    sharpe = (cagr - 0.02) / vol if vol > 0 else 0
     cum_rets = (returns + 1).cumprod()
     drawdown = (cum_rets / cum_rets.cummax() - 1).min()
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Sectoriel : Stratégie & Holding")
+    st.title("🚀 Momentum Sectoriel : Stratégie & Volatilité")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -32,13 +33,12 @@ def run_momentum_pure():
         st.header("⚙️ Paramètres")
         n_top = st.slider("Nombre de secteurs à détenir", 1, 5, 3)
         lookback = st.slider("Période d'analyse (Look-back en mois)", 1, 12, 3)
-        # NOUVEAU : Durée de détention
         holding_period = st.slider("Durée de détention (Holding en mois)", 1, 12, 1)
         
         start_date = st.date_input("Date de début", value=date(1999, 1, 1), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
         end_date = st.date_input("Date de fin", value=date(2026, 12, 31), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
         st.divider()
-        st.info(f"Analyse : Top {n_top} / Look-back {lookback}m / Holding {holding_period}m")
+        st.info(f"Configuration : Top {n_top} / Look-back {lookback}m / Holding {holding_period}m")
 
     if start_date >= end_date:
         st.error("La date de début doit être antérieure à la date de fin.")
@@ -70,34 +70,23 @@ def run_momentum_pure():
                     valid_start_idx = j
                     break
 
-            # --- LOGIQUE DE BACKTEST AVEC HOLDING PERIOD ---
             for i in range(valid_start_idx, len(monthly_close) - 1):
-                # On ne change de portefeuille que si on est sur un multiple de holding_period
-                # ou si c'est le tout premier mois d'investissement
                 if (i - valid_start_idx) % holding_period == 0:
                     scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     if len(scores) < n_top: continue
-                    
                     new_top = scores.index[:n_top].tolist()
-                    
-                    # Calcul des transactions
                     if current_top:
-                        new_entries = len([s for s in new_top if s not in current_top])
-                        portfolio_changes += new_entries
+                        portfolio_changes += len([s for s in new_top if s not in current_top])
                     else:
-                        portfolio_changes += n_top # Premier achat
-                    
+                        portfolio_changes += n_top
                     current_top = new_top
                 
-                # Calcul de la performance du mois pour les secteurs actuellement en portefeuille
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
-                    
                     strat_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
                     spy_ret = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
-                    
                     history.append({'Date': monthly_close.index[i+1], 'Strat': strat_ret, 'SPY': spy_ret})
                 except: continue
 
@@ -106,30 +95,32 @@ def run_momentum_pure():
             return
 
         df = pd.DataFrame(history).set_index('Date')
+        # m_s[1] et m_b[1] contiennent désormais la volatilité
         m_s = calculate_metrics(df['Strat'])
         m_b = calculate_metrics(df['SPY'])
 
         # --- DASHBOARD ---
-        st.subheader(f"📊 Performance & Analytics (Holding : {holding_period} mois)")
+        st.subheader(f"📊 Performance & Risque")
         
+        # Ajout d'une ligne de metrics incluant la volatilité
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("CAGR Stratégie", f"{m_s[0]*100:.2f}%")
-        c2.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
-        c3.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
-        c4.metric("Total Return", f"{m_s[4]*100:.1f}%")
+        c2.metric("Volatilité Ann.", f"{m_s[1]*100:.2f}%")
+        c3.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
+        c4.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
         c5.metric("Transactions", f"{portfolio_changes}")
 
         st.line_chart((1 + df).cumprod() * 100)
 
+        # Tableau de comparaison détaillé
         st.table(pd.DataFrame({
-            'Métrique': ['CAGR', 'Sharpe', 'Max Drawdown', 'Transactions', 'Transac./an'],
-            'Stratégie': [f"{m_s[0]*100:.2f}%", f"{m_s[2]:.2f}", f"{m_s[3]*100:.2f}%", portfolio_changes, round(portfolio_changes / (len(df)/12), 1)],
-            'S&P 500': [f"{m_b[0]*100:.2f}%", f"{m_b[2]:.2f}", f"{m_b[3]*100:.2f}%", "-", "-"]
+            'Métrique': ['Rendement Annuel (CAGR)', 'Volatilité Annuelle', 'Ratio Sharpe', 'Max Drawdown', 'Performance Totale', 'Transactions'],
+            'Stratégie': [f"{m_s[0]*100:.2f}%", f"{m_s[1]*100:.2f}%", f"{m_s[2]:.2f}", f"{m_s[3]*100:.2f}%", f"{m_s[4]*100:.1f}%", portfolio_changes],
+            'S&P 500': [f"{m_b[0]*100:.2f}%", f"{m_b[1]*100:.2f}%", f"{m_b[2]:.2f}", f"{m_b[3]*100:.2f}%", f"{m_b[4]*100:.1f}%", "-"]
         }))
 
-        # Signaux actuels
         st.divider()
-        st.subheader("🎯 Secteurs détenus actuellement")
+        st.subheader("🎯 Positions Actuelles")
         scols = st.columns(n_top)
         for idx, t in enumerate(current_top):
             scols[idx].success(f"Position {idx+1} : **{t}**")
