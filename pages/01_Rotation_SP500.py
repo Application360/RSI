@@ -37,6 +37,7 @@ def run_momentum_pure():
         
         st.divider()
         st.header("🛡️ Protection (Market Timing)")
+        # NOUVEAU : Slider pour la Moyenne Mobile
         sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150)
         
         st.divider()
@@ -49,12 +50,14 @@ def run_momentum_pure():
 
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
-        margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 40)
+        # Marge pour le momentum ET pour la moyenne mobile (250 jours max)
+        margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 30, sma_p) + 20)
         data = yf.download(sectors + ['SPY'], start=margin_start, end=e_date, progress=False)
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
         
         closes = data['Close'].ffill()
         opens = data['Open'].ffill()
+        # Calcul de la MM sur les prix quotidiens du SPY
         spy_sma = closes['SPY'].rolling(window=sma_p).mean()
         
         return closes, opens, spy_sma
@@ -69,7 +72,7 @@ def run_momentum_pure():
             
             history = []
             portfolio_changes = 0
-            current_top = []
+            current_top = [] # Si vide = Cash
             
             start_dt = pd.to_datetime(start_date)
             valid_start_idx = lookback
@@ -82,37 +85,35 @@ def run_momentum_pure():
                 monthly_fees = 0
                 dt_now = monthly_close.index[i]
                 
-                # --- CORRECTION DU BUG DE TIMESTAMP ---
-                # On cherche l'index le plus proche pour éviter le KeyError sur les week-ends
-                idx_sma = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
-                idx_close = close_data['SPY'].index.get_indexer([dt_now], method='ffill')[0]
-                
-                price_spy = close_data['SPY'].iloc[idx_close]
-                val_sma = spy_sma.iloc[idx_sma]
-
-                # --- LOGIQUE DE REBALANCEMENT ---
+                # --- LOGIQUE DE REBALANCEMENT & FILTRE ---
                 if (i - valid_start_idx) % holding_period == 0:
-                    is_market_bull = price_spy > val_sma
+                    # Vérification du filtre de tendance : SPY > sa MM ?
+                    is_market_bull = close_data['SPY'].loc[dt_now] > spy_sma.loc[dt_now]
                     
                     if is_market_bull:
                         scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                         new_top = scores.index[:n_top].tolist()
                         
+                        # Calcul des frais si changement
                         if current_top:
                             num_changes = len([s for s in new_top if s not in current_top])
-                            portfolio_changes += num_changes
-                            monthly_fees = (num_changes / n_top) * fees_pct
+                            if num_changes > 0:
+                                portfolio_changes += num_changes
+                                monthly_fees = (num_changes / n_top) * fees_pct
                         else:
+                            # Entrée sur le marché (Cash -> Actions)
                             portfolio_changes += n_top
                             monthly_fees = fees_pct
                         current_top = new_top
                     else:
+                        # LE MARCHE EST SOUS LA MM -> PASSAGE EN CASH
                         if current_top:
+                            # On vend tout : frais de sortie
                             portfolio_changes += len(current_top)
                             monthly_fees = fees_pct 
-                        current_top = []
+                        current_top = [] # Portefeuille vide = 0% rendement
 
-                # --- RENDEMENT MENSUEL ---
+                # --- CALCUL DU RENDEMENT MENSUEL ---
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
@@ -121,9 +122,12 @@ def run_momentum_pure():
                     if current_top:
                         gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
                     else:
-                        gross_ret = 0.0
+                        gross_ret = 0.0 # On est en cash
                     
-                    history.append({'Date': monthly_close.index[i+1], 'Strat': gross_ret - monthly_fees, 'SPY': (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1})
+                    strat_ret_net = gross_ret - monthly_fees
+                    spy_ret = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
+                    
+                    history.append({'Date': monthly_close.index[i+1], 'Strat': strat_ret_net, 'SPY': spy_ret, 'InMarket': len(current_top) > 0})
                 except: continue
 
         if not history:
@@ -134,20 +138,62 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Strat'])
         m_b = calculate_metrics(df['SPY'])
 
-        # Affichage
-        st.subheader("📊 Comparaison des Métriques Clés")
-        c1, c2 = st.columns(2)
-        c1.metric("CAGR Stratégie", f"{m_s[0]*100:.2f}%", delta=f"{(m_s[0]-m_b[0])*100:.1f}% vs SPY")
-        c2.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
+        # --- DASHBOARD ---
+        st.subheader("📊 Métriques Clés (Avec Filtre MM)")
         
-        st.line_chart((1 + df[['Strat', 'SPY']]).cumprod() * 100)
+        c_s, c_b = st.columns(2)
+        with c_s:
+            st.markdown(f"**🔹 Ma Stratégie (MM {sma_period}j)**")
+            cols = st.columns(4)
+            cols[0].metric("CAGR Net", f"{m_s[0]*100:.2f}%")
+            cols[1].metric("Volatilité", f"{m_s[1]*100:.2f}%")
+            cols[2].metric("Ratio Sharpe", f"{m_s[2]:.2f}")
+            cols[3].metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
         
-        # Status final
+        with c_b:
+            st.markdown("**🔸 S&P 500 (Benchmark)**")
+            cols = st.columns(4)
+            cols[0].metric("CAGR", f"{m_b[0]*100:.2f}%")
+            cols[1].metric("Volatilité", f"{m_b[1]*100:.2f}%")
+            cols[2].metric("Ratio Sharpe", f"{m_b[2]:.2f}")
+            cols[3].metric("Max Drawdown", f"{m_b[3]*100:.2f}%")
+
         st.divider()
-        if close_data['SPY'].iloc[-1] > spy_sma.iloc[-1]:
-            st.success(f"✅ Tendance HAUSSIÈRE (SPY > MM{sma_period})")
+        
+        # --- GRAPHIQUES ---
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.subheader("📈 Performance Cumulée")
+            st.line_chart((1 + df[['Strat', 'SPY']]).cumprod() * 100)
+        with col_r:
+            st.subheader("📉 Risque : Drawdown Historique")
+            cum_strat = (1 + df['Strat']).cumprod()
+            dd_strat = (cum_strat / cum_strat.cummax() - 1) * 100
+            cum_spy = (1 + df['SPY']).cumprod()
+            dd_spy = (cum_spy / cum_spy.cummax() - 1) * 100
+            st.area_chart(pd.DataFrame({'Stratégie': dd_strat, 'S&P 500': dd_spy}))
+
+        # --- TABLEAU ANNUEL ---
+        st.subheader("📅 Détail Annuel & Surperformance")
+        annual_summary = df[['Strat', 'SPY']].groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
+        annual_summary['Alpha'] = annual_summary['Strat'] - annual_summary['SPY']
+        
+        display_tab = annual_summary.copy()
+        for col in display_tab.columns:
+            display_tab[col] = display_tab[col].map(lambda x: f"{x*100:.2f}%")
+        
+        st.table(display_tab.sort_index(ascending=False))
+
+        # --- STATUS ACTUEL ---
+        st.divider()
+        st.subheader("🛡️ État actuel du système")
+        is_bull = close_data['SPY'].iloc[-1] > spy_sma.iloc[-1]
+        if is_bull:
+            st.success(f"✅ MARCHÉ HAUSSIER : SPY ({close_data['SPY'].iloc[-1]:.2f}) > MM{sma_period} ({spy_sma.iloc[-1]:.2f})")
+            st.info(f"Secteurs à détenir : {', '.join(current_top) if current_top else 'Calcul en cours...'}")
         else:
-            st.warning(f"⚠️ Tendance BAISSIÈRE (SPY < MM{sma_period}) - Mode CASH")
+            st.warning(f"⚠️ MARCHÉ BAISSIER : SPY ({close_data['SPY'].iloc[-1]:.2f}) < MM{sma_period} ({spy_sma.iloc[-1]:.2f})")
+            st.error("🚀 POSITION ACTUELLE : CASH (0% exposition)")
 
     except Exception as e:
         st.error(f"Erreur : {e}")
