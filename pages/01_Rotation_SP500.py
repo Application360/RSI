@@ -131,4 +131,22 @@ def run_momentum_pure():
         for col in ['Strat', 'SPY', 'Surperformance']:
             annual_display[col] = annual_display[col].map(lambda x: f"{x*100:.2f}%")
         
-        annual_display.columns = ['Stratégie', 'S&P 500', 'Alpha (vs SP500
+        annual_display.columns = ['Stratégie', 'S&P 500', 'Alpha (vs SP500)']
+        
+        def color_alpha(val):
+            color = 'green' if float(val.replace('%', '')) > 0 else 'red'
+            return f'color: {color}'
+
+        st.table(annual_display.sort_index(ascending=False).style.applymap(color_alpha, subset=['Alpha (vs SP500)']))
+
+        st.divider()
+        st.subheader("🎯 Signaux de fin de période")
+        scols = st.columns(n_top)
+        for idx, t in enumerate(current_top):
+            scols[idx].success(f"Position {idx+1} : **{t}**")
+
+    except Exception as e:
+        st.error(f"Erreur : {e}")
+
+if __name__ == "__main__":
+    run_momentum_pure()
