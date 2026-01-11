@@ -125,7 +125,6 @@ def run_momentum_pure():
         # --- DASHBOARD ---
         st.subheader("📊 Métriques Stratégie vs S&P 500")
         
-        # Bloc Stratégie (ajouts de la performance totale)
         st.markdown(f"### 🔹 Ma Stratégie (Rotation {holding_period}m / Sécurité Mensuelle)")
         c = st.columns(6)
         c[0].metric("Performance Totale", f"{m_s[4]*100:.2f}%")
@@ -137,7 +136,6 @@ def run_momentum_pure():
         
         st.markdown("---")
 
-        # Bloc S&P 500
         st.markdown("### 🔸 S&P 500")
         b = st.columns(6)
         b[0].metric("Performance Totale", f"{m_b[4]*100:.2f}%")
@@ -156,9 +154,11 @@ def run_momentum_pure():
             st.line_chart((1 + df[['Strat', 'SPY']]).cumprod() * 100)
         with g2:
             st.subheader("📉 Risque : Drawdown Historique (%)")
+            # Calcul du drawdown
             dd_strat = ((1 + df['Strat']).cumprod() / (1 + df['Strat']).cumprod().cummax() - 1) * 100
             dd_spy = ((1 + df['SPY']).cumprod() / (1 + df['SPY']).cumprod().cummax() - 1) * 100
-            st.area_chart(pd.DataFrame({'Stratégie': dd_strat, 'S&P 500': dd_spy}))
+            # Utilisation de st.line_chart au lieu de st.area_chart
+            st.line_chart(pd.DataFrame({'Ma Stratégie': dd_strat, 'S&P 500': dd_spy}))
 
         # --- TABLEAU ANNUEL ---
         st.subheader("📅 Détail Annuel & Alpha")
