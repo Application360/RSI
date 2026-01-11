@@ -38,7 +38,7 @@ def run_momentum_pure():
         st.divider()
         st.header("🛡️ Market Timing (Mensuel)")
         use_market_timing = st.checkbox("Activer le filtre de tendance", value=True)
-        sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150, disabled=not use_market_timing)
+        sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 300, 150, disabled=not use_market_timing)
         
         st.divider()
         start_date = st.date_input("Date de début", value=date(1999, 1, 1))
