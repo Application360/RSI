@@ -138,4 +138,14 @@ def run_momentum_pure():
         st.divider()
         st.subheader("🎯 Signaux de Rebalancement")
         last_m = momentum.iloc[-1].sort_values(ascending=False)
-        top_now = last_m.index[:n_top].tolist
+        top_now = last_m.index[:n_top].tolist()
+        
+        scols = st.columns(n_top)
+        for idx, t in enumerate(top_now):
+            scols[idx].success(f"Position {idx+1} : **{t}**")
+
+    except Exception as e:
+        st.error(f"Erreur d'exécution : {e}")
+
+if __name__ == "__main__":
+    run_momentum_pure()
