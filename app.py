@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import date
 
 # --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="RSI Strategy Pro - CAGR & Export", layout="wide")
+st.set_page_config(page_title="RSI Strategy Ultimate", layout="wide")
 
 # --- BARRE LATÉRALE (PARAMÈTRES) ---
 st.sidebar.header("⚙️ Paramètres")
@@ -15,9 +15,9 @@ ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
 # CHOIX DE LA PÉRIODE RSI
 rsi_period = st.sidebar.slider("Période du RSI (Fenêtre)", min_value=2, max_value=30, value=10)
 
-st.title(f"📊 RSI {rsi_period} : Performance, Risque & Export")
+st.title(f"📊 Analyse Comparative : Stratégie RSI {rsi_period} vs Indice")
 st.markdown(f"""
-Analyse complète de la stratégie avec **CAGR**, **Volatilité** et **Export des données**.
+Tableau de bord complet : Performance Totale, CAGR, Volatilité et Max Drawdown.
 """)
 
 # --- SÉLECTEURS DE DATES ---
@@ -82,32 +82,56 @@ else:
     if data is not None:
         years = (data.index[-1] - data.index[0]).days / 365.25
 
-        # 1. GRAPHIQUE PRINCIPAL
-        st.subheader("📈 Évolution de l'Investissement")
+        # 1. GRAPHIQUE
+        st.subheader("📈 Évolution Comparative (Échelle Log)")
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name="Indice", line=dict(color='gray', width=1, dash='dot')))
-        fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name="Stratégie RSI", line=dict(color='green', width=2.5)))
+        fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name=f"Indice ({ticker})", line=dict(color='gray', width=1, dash='dot')))
+        fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name="Ma Stratégie", line=dict(color='green', width=2.5)))
         fig.update_layout(yaxis_type="log", template="plotly_white", height=450, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        # 2. MÉTRIQUES DE RÉSUMÉ
+        # 2. CALCULS DES MÉTRIQUES
+        # Performance Totale
+        total_strat = (data['cum_strat'].iloc[-1] - 1) * 100
+        total_mkt = (data['cum_mkt'].iloc[-1] - 1) * 100
+        
+        # CAGR
         cagr_strat = (data['cum_strat'].iloc[-1] ** (1/years) - 1) * 100 if years > 0 else 0
         cagr_mkt = (data['cum_mkt'].iloc[-1] ** (1/years) - 1) * 100 if years > 0 else 0
+        
+        # Volatilité
         vol_strat = data['net_ret'].std() * np.sqrt(52) * 100
         vol_mkt = data['mkt_ret'].std() * np.sqrt(52) * 100
+        
+        # Max Drawdown
         mdd_strat = calc_max_drawdown(data['cum_strat'])
         mdd_mkt = calc_max_drawdown(data['cum_mkt'])
 
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        col_m1.metric("CAGR Stratégie", f"{cagr_strat:.2f} %", f"{cagr_strat - cagr_mkt:.2f} % vs Indice")
-        col_m2.metric("Volatilité", f"{vol_strat:.2f} %", f"{vol_strat - vol_mkt:.2f} %", delta_color="inverse")
-        col_m3.metric("Max Drawdown", f"{mdd_strat:.2f} %", f"{mdd_strat - mdd_mkt:.2f} % pts")
-        col_m4.metric("Trades effectués", int(data['trade'].sum()))
+        # 3. AFFICHAGE DES MÉTRIQUES (LIGNE 1 : PERF / LIGNE 2 : RISQUE)
+        st.subheader("📊 Métriques Stratégie vs Indice")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.write("**Performance Totale**")
+            st.metric("Stratégie", f"{total_strat:,.2f} %", delta=f"{total_strat - total_mkt:,.2f} %")
+            st.metric("Indice", f"{total_mkt:,.2f} %")
+        with col2:
+            st.write("**CAGR (Annuel)**")
+            st.metric("Stratégie", f"{cagr_strat:.2f} %", delta=f"{cagr_strat - cagr_mkt:.2f} %")
+            st.metric("Indice", f"{cagr_mkt:.2f} %")
+        with col3:
+            st.write("**Volatilité Annuelle**")
+            st.metric("Stratégie", f"{vol_strat:.2f} %", delta=f"{vol_strat - vol_mkt:.2f} %", delta_color="inverse")
+            st.metric("Indice", f"{vol_mkt:.2f} %")
+        with col4:
+            st.write("**Max Drawdown**")
+            st.metric("Stratégie", f"{mdd_strat:.2f} %", delta=f"{mdd_strat - mdd_mkt:.2f} % pts")
+            st.metric("Indice", f"{mdd_mkt:.2f} %")
 
         st.write("---")
 
-        # 3. ANALYSE ANNUELLE ET EXPORT
-        st.subheader("📅 Performance Annuelle & Export")
+        # 4. ANALYSE ANNUELLE & EXPORT
+        st.subheader("📅 Analyse par Année Civile")
         
         annual_strat = data['net_ret'].groupby(data.index.year).apply(lambda x: (np.prod(1 + x.fillna(0)) - 1) * 100)
         annual_mkt = data['mkt_ret'].groupby(data.index.year).apply(lambda x: (np.prod(1 + x.fillna(0)) - 1) * 100)
@@ -118,31 +142,16 @@ else:
             'Différence (%)': annual_strat - annual_mkt
         }).sort_index(ascending=False)
 
-        # Zone d'exportation
-        col_table, col_export = st.columns([3, 1])
-        
-        with col_table:
+        c_table, c_export = st.columns([3, 1])
+        with c_table:
             st.dataframe(df_annual.style.format("{:.2f} %").applymap(
                 lambda val: f'color: {"green" if val > 0 else "red"}', subset=['Différence (%)']
             ), use_container_width=True)
-        
-        with col_export:
-            st.write("📥 **Sauvegarder les résultats**")
+        with c_export:
+            st.write("📥 **Exportation**")
             csv = df_annual.to_csv(index=True).encode('utf-8')
-            st.download_button(
-                label="Télécharger en CSV",
-                data=csv,
-                file_name=f"RSI_{rsi_period}_analysis_{ticker}.csv",
-                mime='text/csv',
-            )
-            st.caption("Fichier compatible Excel, Google Sheets et Numbers.")
-
-        # 4. GRAPHIQUE EN BARRES
-        fig_bar = go.Figure()
-        fig_bar.add_trace(go.Bar(x=df_annual.index, y=df_annual['Stratégie (%)'], name='Stratégie', marker_color='green'))
-        fig_bar.add_trace(go.Bar(x=df_annual.index, y=df_annual['Indice (%)'], name='Indice', marker_color='lightgray'))
-        fig_bar.update_layout(barmode='group', template='plotly_white', height=350)
-        st.plotly_chart(fig_bar, use_container_width=True)
+            st.download_button("Télécharger CSV", data=csv, file_name=f"RSI_Analysis_{ticker}.csv", mime='text/csv')
+            st.info(f"Trades : {int(data['trade'].sum())}")
 
     else:
-        st.error("Données introuvables pour ce symbole.")
+        st.error("Données indisponibles.")
