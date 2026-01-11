@@ -17,7 +17,7 @@ def calculate_metrics(returns):
     
     cagr = (total_return + 1) ** (1 / n_years) - 1
     vol = returns.std() * np.sqrt(12)
-    sharpe = (cagr - 0.02) / vol if vol > 0 else 0
+    sharpe = (cagr) / vol if vol > 0 else 0
     cum_rets = (returns + 1).cumprod()
     drawdown = (cum_rets / cum_rets.cummax() - 1).min()
     return cagr, vol, sharpe, drawdown, total_return
