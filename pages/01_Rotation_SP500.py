@@ -37,7 +37,7 @@ def run_momentum_pure():
         
         st.divider()
         st.header("🛡️ Protection (Market Timing)")
-        sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150)
+        sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 0, 250, 150)
         
         st.divider()
         start_date = st.date_input("Date de début", value=date(1999, 1, 1))
