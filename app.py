@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import date
 
 # --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="RSI Custom Strategy Tracker", layout="wide")
+st.set_page_config(page_title="RSI CAGR & Vol Tracker", layout="wide")
 
 # --- BARRE LATÉRALE (PARAMÈTRES) ---
 st.sidebar.header("⚙️ Paramètres")
@@ -15,9 +15,9 @@ ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
 # CHOIX DE LA PÉRIODE RSI
 rsi_period = st.sidebar.slider("Période du RSI (Fenêtre)", min_value=2, max_value=30, value=10)
 
-st.title(f"📊 Comparaison : Stratégie RSI {rsi_period} vs Indice")
+st.title(f"📊 Stratégie RSI {rsi_period} : Performance & Risque")
 st.markdown(f"""
-Cette application compare la stratégie **RSI {rsi_period}** (Achat si RSI ≥ seuil tendance ou RSI < seuil panique) avec l'investissement passif.
+Analyse approfondie incluant la **Volatilité** et le **Rendement Annuel Composé (CAGR)**.
 """)
 
 # --- SÉLECTEURS DE DATES ---
@@ -80,66 +80,79 @@ else:
     data = get_data_and_calc(ticker, start_date, end_date, fees, threshold_buy, threshold_panic, rsi_period)
 
     if data is not None:
+        # Calcul du nombre d'années pour le CAGR
+        days = (data.index[-1] - data.index[0]).days
+        years = days / 365.25
+
         # 1. ÉTAT ACTUEL
         last_rsi = data['rsi'].iloc[-1]
         last_signal = data['signal'].iloc[-1]
-        last_price = data['price'].iloc[-1]
         
         st.subheader(f"🚨 État au {data.index[-1].strftime('%d/%m/%Y')}")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Prix Actuel", f"{last_price:,.2f}")
+        c1.metric("Prix Actuel", f"{data['price'].iloc[-1]:,.2f}")
         c2.metric(f"RSI {rsi_period}", f"{last_rsi:.2f}")
         with c3:
             if last_signal == 1: st.success("POSITION : ACHAT")
             else: st.warning("POSITION : CASH")
 
-        # 2. GRAPHIQUE DES PERFORMANCES
-        st.subheader("📈 Comparaison des Performances")
+        # 2. GRAPHIQUE
+        st.subheader("📈 Comparaison des Performances (Échelle Log)")
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name=f"Indice ({ticker})", line=dict(color='gray', width=1, dash='dot')))
-        fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name=f"Stratégie RSI {rsi_period}", line=dict(color='green', width=2.5)))
+        fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name="Ma Stratégie", line=dict(color='green', width=2.5)))
         fig.update_layout(yaxis_type="log", template="plotly_white", height=500, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        # 3. CALCULS DES MÉTRIQUES FINALES
-        ret_strat = (data['cum_strat'].iloc[-1] - 1) * 100
-        ret_mkt = (data['cum_mkt'].iloc[-1] - 1) * 100
-        mdd_strat = calc_max_drawdown(data['cum_strat'])
-        mdd_mkt = calc_max_drawdown(data['cum_mkt'])
+        # 3. CALCULS DES MÉTRIQUES
+        # CAGR
+        cagr_strat = (data['cum_strat'].iloc[-1] ** (1/years) - 1) * 100 if years > 0 else 0
+        cagr_mkt = (data['cum_mkt'].iloc[-1] ** (1/years) - 1) * 100 if years > 0 else 0
         
-        # AJOUT : VOLATILITÉ ANNUALISÉE (std * racine de 52 semaines)
+        # Volatilité
         vol_strat = data['net_ret'].std() * np.sqrt(52) * 100
         vol_mkt = data['mkt_ret'].std() * np.sqrt(52) * 100
         
+        # Drawdown
+        mdd_strat = calc_max_drawdown(data['cum_strat'])
+        mdd_mkt = calc_max_drawdown(data['cum_mkt'])
+        
+        # Sharpe
         rf = 0.02
         sharpe_strat = ((data['net_ret'].mean() * 52) - rf) / (data['net_ret'].std() * np.sqrt(52)) if data['net_ret'].std() != 0 else 0
         sharpe_mkt = ((data['mkt_ret'].mean() * 52) - rf) / (data['mkt_ret'].std() * np.sqrt(52)) if data['mkt_ret'].std() != 0 else 0
 
-        # 4. AFFICHAGE DES RÉSULTATS COMPARATIFS
-        st.subheader(f"📊 Résultats : Stratégie RSI {rsi_period} vs Indice")
-        col_a, col_b, col_c, col_d = st.columns(4) # Ajout d'une 4ème colonne
+        # 4. AFFICHAGE DES RÉSULTATS
+        st.subheader("📊 Tableau de Bord des Performances Annuelles & Risques")
         
-        with col_a:
+        # Ligne Performance (CAGR & Totale)
+        row1_col1, row1_col2 = st.columns(2)
+        with row1_col1:
+            st.write("**Performance Annuelle (CAGR)**")
+            st.metric("CAGR Stratégie", f"{cagr_strat:.2f} % / an", delta=f"{cagr_strat - cagr_mkt:.2f} % vs Indice")
+            st.metric("CAGR Indice", f"{cagr_mkt:.2f} % / an")
+        with row1_col2:
             st.write("**Performance Totale**")
-            st.metric("Stratégie", f"{ret_strat:,.2f} %", delta=f"{ret_strat - ret_mkt:.2f} % vs Indice")
-            st.metric("Indice", f"{ret_mkt:,.2f} %")
-            
-        with col_b:
-            st.write("**Risque (Max Drawdown)**")
-            st.metric("DD Stratégie", f"{mdd_strat:.2f} %", delta=f"{mdd_strat - mdd_mkt:.2f} % pts")
-            st.metric("DD Indice", f"{mdd_mkt:.2f} %")
+            st.metric("Total Stratégie", f"{(data['cum_strat'].iloc[-1]-1)*100:,.2f} %")
+            st.metric("Total Indice", f"{(data['cum_mkt'].iloc[-1]-1)*100:,.2f} %")
 
-        with col_c:
+        st.write("---")
+        
+        # Ligne Risque (Vol & Drawdown)
+        row2_col1, row2_col2, row2_col3 = st.columns(3)
+        with row2_col1:
+            st.write("**Volatilité Annualisée**")
+            st.metric("Vol Stratégie", f"{vol_strat:.2f} %", delta=f"{vol_strat - vol_mkt:.2f} %", delta_color="inverse")
+            st.metric("Vol Indice", f"{vol_mkt:.2f} %")
+        with row2_col2:
+            st.write("**Risque (Max Drawdown)**")
+            st.metric("MDD Stratégie", f"{mdd_strat:.2f} %", delta=f"{mdd_strat - mdd_mkt:.2f} % pts")
+            st.metric("MDD Indice", f"{mdd_mkt:.2f} %")
+        with row2_col3:
             st.write("**Efficacité (Sharpe)**")
             st.metric("Sharpe Stratégie", f"{sharpe_strat:.2f}", delta=f"{sharpe_strat - sharpe_mkt:.2f}")
             st.metric("Sharpe Indice", f"{sharpe_mkt:.2f}")
 
-        with col_d:
-            st.write("**Volatilité Annualisée**")
-            st.metric("Vol Stratégie", f"{vol_strat:.2f} %", delta=f"{vol_strat - vol_mkt:.2f} %", delta_color="inverse")
-            st.metric("Vol Indice", f"{vol_mkt:.2f} %")
-
-        st.write("---")
-        st.write(f"**Nombre de Trades :** {int(data['trade'].sum())}")
+        st.info(f"Période analysée : {years:.1f} ans. Nombre de trades : {int(data['trade'].sum())}")
     else:
         st.error("Aucune donnée trouvée.")
