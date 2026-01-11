@@ -17,14 +17,13 @@ def calculate_metrics(returns):
     
     cagr = (total_return + 1) ** (1 / n_years) - 1
     vol = returns.std() * np.sqrt(12)
-    # Sharpe sans taux sans risque pour simplifier ou (cagr - 0.02) / vol
     sharpe = (cagr) / vol if vol > 0 else 0
     cum_rets = (returns + 1).cumprod()
     drawdown = (cum_rets / cum_rets.cummax() - 1).min()
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Sectoriel : Comparaison Stratégie vs S&P 500")
+    st.title("🚀 Momentum Sectoriel : Impact des Frais & Rotation")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -35,10 +34,13 @@ def run_momentum_pure():
         lookback = st.slider("Période d'analyse (Look-back en mois)", 1, 12, 6)
         holding_period = st.slider("Durée de détention (Holding en mois)", 1, 12, 9)
         
+        # NOUVEAU : Slider pour les frais de transaction
+        fees_pct = st.slider("Frais par transaction (%)", 0.0, 1.0, 0.1, step=0.05) / 100
+        
         start_date = st.date_input("Date de début", value=date(1999, 1, 1), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
         end_date = st.date_input("Date de fin", value=date(2026, 12, 31), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
         st.divider()
-        st.info(f"Analyse : Top {n_top} / Look-back {lookback}m / Holding {holding_period}m")
+        st.info(f"Paramètres : Top {n_top} | LB: {lookback}m | Hold: {holding_period}m | Frais: {fees_pct*100:.2f}%")
 
     if start_date >= end_date:
         st.error("La date de début doit être antérieure à la date de fin.")
@@ -71,23 +73,41 @@ def run_momentum_pure():
                     break
 
             for i in range(valid_start_idx, len(monthly_close) - 1):
+                monthly_fees = 0
+                
+                # Rebalancement
                 if (i - valid_start_idx) % holding_period == 0:
                     scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     if len(scores) < n_top: continue
                     new_top = scores.index[:n_top].tolist()
+                    
                     if current_top:
-                        portfolio_changes += len([s for s in new_top if s not in current_top])
+                        # On compte les sorties et les entrées (chaque changement = 2 transactions : 1 vente + 1 achat)
+                        num_changes = len([s for s in new_top if s not in current_top])
+                        if num_changes > 0:
+                            portfolio_changes += num_changes
+                            # Frais appliqués sur le montant réinvesti (num_changes secteurs sur n_top au total)
+                            monthly_fees = (num_changes / n_top) * fees_pct
                     else:
+                        # Premier investissement
                         portfolio_changes += n_top
+                        monthly_fees = fees_pct # Frais sur 100% du capital au départ
+                    
                     current_top = new_top
                 
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
-                    strat_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
+                    
+                    # Rendement brut
+                    gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
+                    
+                    # Rendement net (on retire les frais de transaction du mois s'il y en a eu)
+                    strat_ret_net = gross_ret - monthly_fees
+                    
                     spy_ret = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
-                    history.append({'Date': monthly_close.index[i+1], 'Strat': strat_ret, 'SPY': spy_ret})
+                    history.append({'Date': monthly_close.index[i+1], 'Strat': strat_ret_net, 'SPY': spy_ret})
                 except: continue
 
         if not history:
@@ -99,15 +119,15 @@ def run_momentum_pure():
         m_b = calculate_metrics(df['SPY'])
 
         # --- DASHBOARD DES MÉTRIQUES ---
-        st.subheader("📊 Comparaison des Métriques Clés")
+        st.subheader("📊 Comparaison des Métriques Clés (Nettes de frais)")
         
-        st.markdown("**🔹 Ma Stratégie**")
+        st.markdown("**🔹 Ma Stratégie (Après Frais)**")
         col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
-        col_s1.metric("CAGR", f"{m_s[0]*100:.2f}%")
+        col_s1.metric("CAGR Net", f"{m_s[0]*100:.2f}%")
         col_s2.metric("Volatilité", f"{m_s[1]*100:.2f}%")
         col_s3.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
         col_s4.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
-        col_s5.metric("Transactions", f"{portfolio_changes}")
+        col_s5.metric("Total Transactions", f"{portfolio_changes}")
 
         st.markdown("**🔸 S&P 500 (Benchmark)**")
         col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
@@ -121,23 +141,19 @@ def run_momentum_pure():
         
         # --- GRAPHIQUES ---
         col_left, col_right = st.columns(2)
-        
         with col_left:
-            st.subheader("📈 Performance Cumulée")
+            st.subheader("📈 Performance Cumulée Nette")
             st.line_chart((1 + df).cumprod() * 100)
-            
         with col_right:
             st.subheader("📉 Historique des Drawdowns (%)")
             cum_strat = (1 + df['Strat']).cumprod()
             dd_strat = (cum_strat / cum_strat.cummax() - 1) * 100
             cum_spy = (1 + df['SPY']).cumprod()
             dd_spy = (cum_spy / cum_spy.cummax() - 1) * 100
-            
-            dd_df = pd.DataFrame({'Stratégie': dd_strat, 'S&P 500': dd_spy})
-            st.area_chart(dd_df)
+            st.area_chart(pd.DataFrame({'Stratégie': dd_strat, 'S&P 500': dd_spy}))
 
-        # --- TABLEAU DES PERFORMANCES ANNUELLES ---
-        st.subheader("📅 Performance Calendaire Annuelle")
+        # --- TABLEAU ANNUEL ---
+        st.subheader("📅 Performance Calendaire Annuelle (Nette)")
         annual_summary = df.groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
         annual_summary['Surperformance'] = annual_summary['Strat'] - annual_summary['SPY']
         
@@ -145,19 +161,13 @@ def run_momentum_pure():
         for col in ['Strat', 'SPY', 'Surperformance']:
             annual_display[col] = annual_display[col].map(lambda x: f"{x*100:.2f}%")
         
-        annual_display.columns = ['Stratégie', 'S&P 500', 'Alpha (vs SP500)']
+        annual_display.columns = ['Stratégie (Net)', 'S&P 500', 'Alpha (vs SP500)']
         
         def color_alpha(val):
             color = 'green' if float(val.replace('%', '')) > 0 else 'red'
             return f'color: {color}'
 
         st.table(annual_display.sort_index(ascending=False).style.applymap(color_alpha, subset=['Alpha (vs SP500)']))
-
-        st.divider()
-        st.subheader("🎯 Signaux de fin de période")
-        scols = st.columns(n_top)
-        for idx, t in enumerate(current_top):
-            scols[idx].success(f"Position {idx+1} : **{t}**")
 
     except Exception as e:
         st.error(f"Erreur : {e}")
