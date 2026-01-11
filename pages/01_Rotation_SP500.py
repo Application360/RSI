@@ -30,9 +30,9 @@ def run_momentum_pure():
     # --- BARRE LATÉRALE ---
     with st.sidebar:
         st.header("⚙️ Paramètres")
-        n_top = st.slider("Nombre de secteurs à détenir", 1, 5, 3)
-        lookback = st.slider("Période d'analyse (Look-back en mois)", 1, 12, 3)
-        holding_period = st.slider("Durée de détention (Holding en mois)", 1, 12, 1)
+        n_top = st.slider("Nombre de secteurs à détenir", 1, 5, 2)
+        lookback = st.slider("Période d'analyse (Look-back en mois)", 1, 12, 6)
+        holding_period = st.slider("Durée de détention (Holding en mois)", 1, 12, 9)
         
         start_date = st.date_input("Date de début", value=date(1999, 1, 1), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
         end_date = st.date_input("Date de fin", value=date(2026, 12, 31), min_value=date(1999, 1, 1), max_value=date(2026, 12, 31))
