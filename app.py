@@ -15,9 +15,12 @@ ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
 # CHOIX DE LA PÉRIODE RSI
 rsi_period = st.sidebar.slider("Période du RSI (Fenêtre)", min_value=2, max_value=30, value=10)
 
+# --- AJOUT : SÉLECTEUR TAUX SANS RISQUE ---
+risk_free_rate = st.sidebar.slider("Taux sans risque (pour Sharpe)", min_value=0.0, max_value=0.10, value=0.02, step=0.005)
+
 st.title(f"📊 Analyse Comparative : Stratégie RSI {rsi_period} vs Indice")
 st.markdown(f"""
-Tableau de bord complet : Performance Totale, CAGR, Volatilité et Max Drawdown.
+Tableau de bord complet : Performance Totale, CAGR, Volatilité, Max Drawdown et Ratio de Sharpe (RF: {risk_free_rate*100:.2f}%).
 """)
 
 # --- SÉLECTEURS DE DATES ---
@@ -91,26 +94,26 @@ else:
         st.plotly_chart(fig, use_container_width=True)
 
         # 2. CALCULS DES MÉTRIQUES
-        # Performance Totale
         total_strat = (data['cum_strat'].iloc[-1] - 1) * 100
         total_mkt = (data['cum_mkt'].iloc[-1] - 1) * 100
         
-        # CAGR
         cagr_strat = (data['cum_strat'].iloc[-1] ** (1/years) - 1) * 100 if years > 0 else 0
         cagr_mkt = (data['cum_mkt'].iloc[-1] ** (1/years) - 1) * 100 if years > 0 else 0
         
-        # Volatilité
         vol_strat = data['net_ret'].std() * np.sqrt(52) * 100
         vol_mkt = data['mkt_ret'].std() * np.sqrt(52) * 100
         
-        # Max Drawdown
         mdd_strat = calc_max_drawdown(data['cum_strat'])
         mdd_mkt = calc_max_drawdown(data['cum_mkt'])
+
+        # --- MISE À JOUR : CALCUL SHARPE AVEC VARIABLE risk_free_rate ---
+        sharpe_strat = ((data['net_ret'].mean() * 52) - risk_free_rate) / (data['net_ret'].std() * np.sqrt(52)) if data['net_ret'].std() != 0 else 0
+        sharpe_mkt = ((data['mkt_ret'].mean() * 52) - risk_free_rate) / (data['mkt_ret'].std() * np.sqrt(52)) if data['mkt_ret'].std() != 0 else 0
 
         # 3. AFFICHAGE DES MÉTRIQUES (LIGNE 1 : PERF / LIGNE 2 : RISQUE)
         st.subheader("📊 Métriques Stratégie vs Indice")
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5) # Ajout d'une 5ème colonne
         with col1:
             st.write("**Performance Totale**")
             st.metric("Stratégie", f"{total_strat:,.2f} %", delta=f"{total_strat - total_mkt:,.2f} %")
@@ -127,6 +130,10 @@ else:
             st.write("**Max Drawdown**")
             st.metric("Stratégie", f"{mdd_strat:.2f} %", delta=f"{mdd_strat - mdd_mkt:.2f} % pts")
             st.metric("Indice", f"{mdd_mkt:.2f} %")
+        with col5:
+            st.write("**Ratio de Sharpe**")
+            st.metric("Stratégie", f"{sharpe_strat:.2f}", delta=f"{sharpe_strat - sharpe_mkt:.2f}")
+            st.metric("Indice", f"{sharpe_mkt:.2f}")
 
         st.write("---")
 
