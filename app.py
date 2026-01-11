@@ -6,16 +6,19 @@ import plotly.graph_objects as go
 from datetime import date
 
 # --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="RSI 10 Strategy Tracker", layout="wide")
-
-st.title("📊 Comparaison : Stratégie RSI 10 vs Indice")
-st.markdown("""
-Cette application compare la stratégie **RSI 10** (Achat si RSI ≥ 50 ou RSI < 32) avec l'investissement passif (Buy & Hold).
-""")
+st.set_page_config(page_title="RSI Custom Strategy Tracker", layout="wide")
 
 # --- BARRE LATÉRALE (PARAMÈTRES) ---
 st.sidebar.header("⚙️ Paramètres")
 ticker = st.sidebar.text_input("Symbole Yahoo Finance", "^GSPC")
+
+# --- NOUVELLE LIGNE : CHOIX DE LA PÉRIODE RSI ---
+rsi_period = st.sidebar.slider("Période du RSI (Fenêtre)", min_value=2, max_value=30, value=10)
+
+st.title(f"📊 Comparaison : Stratégie RSI {rsi_period} vs Indice")
+st.markdown(f"""
+Cette application compare la stratégie **RSI {rsi_period}** (Achat si RSI ≥ seuil tendance ou RSI < seuil panique) avec l'investissement passif.
+""")
 
 # --- SÉLECTEURS DE DATES ---
 col_d1, col_d2 = st.sidebar.columns(2)
@@ -30,9 +33,9 @@ st.sidebar.subheader("Seuils RSI")
 threshold_buy = st.sidebar.number_input("Seuil Achat (Tendance)", value=50)
 threshold_panic = st.sidebar.number_input("Seuil Achat (Panique)", value=32)
 
-# --- FONCTIONS DE CALCUL ---
+# --- FONCTIONS DE CALCUL MODIFIÉE ---
 @st.cache_data
-def get_data_and_calc(ticker, start, end, fees, th_buy, th_panic):
+def get_data_and_calc(ticker, start, end, fees, th_buy, th_panic, period):
     df = yf.download(ticker, start=start, end=end, interval="1wk")
     if df.empty: return None
     
@@ -42,12 +45,12 @@ def get_data_and_calc(ticker, start, end, fees, th_buy, th_panic):
     df = df[['Close']].copy()
     df.columns = ['price']
     
-    # Calcul RSI 10
+    # Calcul RSI avec la période choisie
     delta = df['price'].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=10).mean()
-    avg_loss = loss.rolling(window=10).mean()
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
     rs = avg_gain / avg_loss
     df['rsi'] = 100 - (100 / (1 + rs))
     
@@ -74,7 +77,8 @@ def calc_max_drawdown(cum_series):
 if start_date >= end_date:
     st.error("Erreur : La date de début doit être antérieure à la date de fin.")
 else:
-    data = get_data_and_calc(ticker, start_date, end_date, fees, threshold_buy, threshold_panic)
+    # On passe 'rsi_period' à la fonction
+    data = get_data_and_calc(ticker, start_date, end_date, fees, threshold_buy, threshold_panic, rsi_period)
 
     if data is not None:
         # 1. ÉTAT ACTUEL
@@ -85,7 +89,7 @@ else:
         st.subheader(f"🚨 État au {data.index[-1].strftime('%d/%m/%Y')}")
         c1, c2, c3 = st.columns(3)
         c1.metric("Prix Actuel", f"{last_price:,.2f}")
-        c2.metric("RSI 10", f"{last_rsi:.2f}")
+        c2.metric(f"RSI {rsi_period}", f"{last_rsi:.2f}")
         with c3:
             if last_signal == 1: st.success("POSITION : ACHAT")
             else: st.warning("POSITION : CASH")
@@ -94,7 +98,7 @@ else:
         st.subheader("📈 Comparaison des Performances")
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name=f"Indice ({ticker})", line=dict(color='gray', width=1, dash='dot')))
-        fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name="Ma Stratégie RSI", line=dict(color='green', width=2.5)))
+        fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name=f"Stratégie RSI {rsi_period}", line=dict(color='green', width=2.5)))
         fig.update_layout(yaxis_type="log", template="plotly_white", height=500, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
@@ -109,7 +113,7 @@ else:
         sharpe_mkt = ((data['mkt_ret'].mean() * 52) - rf) / (data['mkt_ret'].std() * np.sqrt(52)) if data['mkt_ret'].std() != 0 else 0
 
         # 4. AFFICHAGE DES RÉSULTATS COMPARATIFS
-        st.subheader("📊 Résultats détaillés : Stratégie vs Indice")
+        st.subheader(f"📊 Résultats : Stratégie RSI {rsi_period} vs Indice")
         col_a, col_b, col_c = st.columns(3)
         
         with col_a:
