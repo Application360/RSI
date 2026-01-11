@@ -23,7 +23,7 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Sectoriel : Analyse Comparative Annuelle")
+    st.title("🚀 Momentum Sectoriel : Comparaison Stratégie vs S&P 500")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -97,53 +97,38 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Strat'])
         m_b = calculate_metrics(df['SPY'])
 
-        # --- DASHBOARD PRINCIPAL ---
-        st.subheader("📊 Métriques Clés")
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("CAGR Stratégie", f"{m_s[0]*100:.2f}%")
-        c2.metric("Volatilité Ann.", f"{m_s[1]*100:.2f}%")
-        c3.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
-        c4.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
-        c5.metric("Transactions", f"{portfolio_changes}")
+        # --- DASHBOARD DES MÉTRIQUES ---
+        st.subheader("📊 Comparaison des Métriques Clés")
+        
+        # Ligne 1 : Stratégie
+        st.markdown("**🔹 Ma Stratégie**")
+        col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
+        col_s1.metric("CAGR", f"{m_s[0]*100:.2f}%")
+        col_s2.metric("Volatilité", f"{m_s[1]*100:.2f}%")
+        col_s3.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
+        col_s4.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
+        col_s5.metric("Transactions", f"{portfolio_changes}")
 
+        # Ligne 2 : S&P 500
+        st.markdown("**🔸 S&P 500 (Benchmark)**")
+        col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
+        col_b1.metric("CAGR", f"{m_b[0]*100:.2f}%")
+        col_b2.metric("Volatilité", f"{m_b[1]*100:.2f}%")
+        col_b3.metric("Ratio Sharpe", f"{m_b[2]:.2f}")
+        col_b4.metric("Max Drawdown", f"{m_b[3]*100:.2f}%")
+        col_b5.write("") # Vide pour l'alignement
+
+        st.divider()
         st.line_chart((1 + df).cumprod() * 100)
 
         # --- TABLEAU DES PERFORMANCES ANNUELLES ---
-        st.divider()
         st.subheader("📅 Performance Calendaire Annuelle")
-
-        # Calcul des rendements par année
         annual_perf = df.copy()
-        # On groupe par année et on calcule le rendement cumulé (1+r1)*(1+r2)... - 1
         annual_summary = annual_perf.groupby(annual_perf.index.year).apply(lambda x: (1 + x).prod() - 1)
-        
-        # Transformation pour l'affichage
         annual_summary['Surperformance'] = annual_summary['Strat'] - annual_summary['SPY']
         
-        # Formatage des données en %
         annual_display = annual_summary.copy()
         for col in ['Strat', 'SPY', 'Surperformance']:
             annual_display[col] = annual_display[col].map(lambda x: f"{x*100:.2f}%")
         
-        # Renommer les colonnes
-        annual_display.columns = ['Ma Stratégie', 'S&P 500 (SPY)', 'Surperformance (Alpha)']
-        
-        # Affichage avec style pour la surperformance
-        def color_surperformance(val):
-            color = 'green' if float(val.replace('%', '')) > 0 else 'red'
-            return f'color: {color}'
-
-        st.table(annual_display.sort_index(ascending=False).style.applymap(color_surperformance, subset=['Surperformance (Alpha)']))
-
-        # Positions actuelles
-        st.divider()
-        st.subheader("🎯 Signaux de fin de période")
-        scols = st.columns(n_top)
-        for idx, t in enumerate(current_top):
-            scols[idx].success(f"Position {idx+1} : **{t}**")
-
-    except Exception as e:
-        st.error(f"Erreur : {e}")
-
-if __name__ == "__main__":
-    run_momentum_pure()
+        annual_display.columns = ['Stratégie', 'S&P 500', 'Alpha (vs SP500
