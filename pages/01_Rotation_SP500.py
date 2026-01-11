@@ -66,7 +66,7 @@ def run_momentum_pure():
             history = []
             portfolio_changes = 0
             current_top = []
-            is_invested = False # État réel du portefeuille (In/Out)
+            is_invested = False 
             
             start_dt = pd.to_datetime(start_date)
             valid_start_idx = lookback
@@ -75,23 +75,21 @@ def run_momentum_pure():
                     valid_start_idx = j
                     break
 
-            # --- BOUCLE DE BACKTEST ---
             for i in range(valid_start_idx, len(monthly_close) - 1):
                 monthly_fees = 0
                 dt_now = monthly_close.index[i]
                 
-                # A. VERIFICATION MENSUELLE DE LA SÉCURITÉ (Market Timing)
+                # A. VERIFICATION MENSUELLE DE LA SÉCURITÉ
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
                 price_spy = close_data['SPY'].iloc[idx_ref]
                 val_sma = spy_sma.iloc[idx_ref]
                 market_is_bull = (price_spy > val_sma) if use_market_timing else True
 
-                # B. ROTATION DES SECTEURS (Tous les X mois seulement)
+                # B. ROTATION DES SECTEURS (Lente)
                 if (i - valid_start_idx) % holding_period == 0:
                     scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     new_top = scores.index[:n_top].tolist()
                     
-                    # Si on change de secteurs alors qu'on est déjà investi -> frais de rotation
                     if is_invested and current_top:
                         num_changes = len([s for s in new_top if s not in current_top])
                         portfolio_changes += num_changes
@@ -99,19 +97,17 @@ def run_momentum_pure():
                     
                     current_top = new_top
 
-                # C. DÉCISION D'ENTRÉE/SORTIE (Vérifiée chaque mois)
+                # C. DÉCISION D'ENTRÉE/SORTIE (Réactive chaque mois)
                 if market_is_bull and not is_invested:
-                    # Signal d'achat : On rentre sur le marché
                     is_invested = True
                     portfolio_changes += len(current_top)
                     monthly_fees += fees_pct
                 elif not market_is_bull and is_invested:
-                    # Signal de vente : On passe en cash
                     is_invested = False
                     portfolio_changes += len(current_top)
                     monthly_fees += fees_pct
 
-                # D. CALCUL RENDEMENT MENSUEL
+                # D. CALCUL RENDEMENT
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
@@ -120,13 +116,12 @@ def run_momentum_pure():
                     if is_invested:
                         gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
                     else:
-                        gross_ret = 0.0 # En Cash
+                        gross_ret = 0.0 
                     
                     history.append({
                         'Date': monthly_close.index[i+1], 
                         'Strat': gross_ret - monthly_fees, 
-                        'SPY': (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1,
-                        'InMarket': is_invested
+                        'SPY': (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
                     })
                 except: continue
 
@@ -138,10 +133,9 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Strat'])
         m_b = calculate_metrics(df['SPY'])
 
-        # --- DASHBOARD DE PERFORMANCE ---
+        # --- DASHBOARD ---
         st.subheader(f"📊 Métriques Stratégie vs S&P 500")
-        
-        st.markdown("### 🔹 Ma Stratégie (Rotation {holding_period}m / Sécurité Mensuelle)")
+        st.markdown(f"### 🔹 Ma Stratégie (Rotation {holding_period}m / Sécurité Mensuelle)")
         c = st.columns(5)
         c[0].metric("CAGR Net", f"{m_s[0]*100:.2f}%")
         c[1].metric("Ratio Sharpe", f"{m_s[2]:.2f}")
@@ -149,7 +143,7 @@ def run_momentum_pure():
         c[3].metric("Volatilité", f"{m_s[1]*100:.2f}%")
         c[4].metric("Transactions", portfolio_changes)
         
-        st.markdown("### 🔸 S&P 500 (Benchmark)")
+        st.markdown("### 🔸 S&P 500")
         b = st.columns(5)
         b[0].metric("CAGR", f"{m_b[0]*100:.2f}%")
         b[1].metric("Ratio Sharpe", f"{m_b[2]:.2f}")
@@ -169,28 +163,33 @@ def run_momentum_pure():
             dd_spy = ((1 + df['SPY']).cumprod() / (1 + df['SPY']).cumprod().cummax() - 1) * 100
             st.area_chart(pd.DataFrame({'Stratégie': dd_strat, 'S&P 500': dd_spy}))
 
-        # --- TABLEAU ANNUEL ---
+        # --- TABLEAU ANNUEL AVEC SURLIGNAGE ALPHA ---
         st.subheader("📅 Détail Annuel & Alpha")
         annual = df[['Strat', 'SPY']].groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
         annual['Alpha'] = annual['Strat'] - annual['SPY']
-        st.table(annual.sort_index(ascending=False).style.format("{:.2%}"))
+
+        # Fonction de style pour l'Alpha
+        def highlight_alpha(val):
+            color = 'background-color: #2ecc71; color: white' if val >= 0 else ''
+            return color
+
+        styled_annual = annual.sort_index(ascending=False).style.format("{:.2%}")\
+            .applymap(highlight_alpha, subset=['Alpha'])
+        
+        st.table(styled_annual)
 
         # --- ÉTAT ACTUEL ---
         st.divider()
-        st.subheader("🎯 État du système au 2026")
-        
-        # On regarde le dernier état calculé
-        last_state = is_invested
-        if last_state:
-            st.success(f"✅ ÉTAT : INVESTI (Le S&P 500 est repassé au-dessus de sa MM{sma_period})")
-            st.info(f"🚀 **Secteurs actuellement sélectionnés :** {', '.join(current_top)}")
+        st.subheader(f"🎯 État du système au {date.today().year}")
+        if is_invested:
+            st.success(f"✅ ÉTAT : INVESTI (SPY > MM{sma_period})")
+            st.info(f"🚀 **Secteurs sélectionnés :** {', '.join(current_top)}")
         else:
-            st.error(f"🛡️ ÉTAT : CASH (Le S&P 500 est sous sa MM{sma_period})")
-            st.warning("En attente d'une clôture mensuelle au-dessus de la Moyenne Mobile pour réinvestir.")
+            st.error(f"🛡️ ÉTAT : CASH (SPY < MM{sma_period})")
+            st.warning("En attente d'un signal haussier mensuel pour réinvestir.")
 
-        # --- EXPORT ---
         csv = df.to_csv().encode('utf-8')
-        st.download_button("📥 Télécharger les données (CSV)", data=csv, file_name="backtest_resultats.csv", mime="text/csv")
+        st.download_button("📥 Télécharger CSV", data=csv, file_name="backtest.csv", mime="text/csv")
 
     except Exception as e:
         st.error(f"Erreur technique : {e}")
