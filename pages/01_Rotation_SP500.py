@@ -17,6 +17,7 @@ def calculate_metrics(returns):
     
     cagr = (total_return + 1) ** (1 / n_years) - 1
     vol = returns.std() * np.sqrt(12)
+    # Sharpe sans taux sans risque pour simplifier ou (cagr - 0.02) / vol
     sharpe = (cagr) / vol if vol > 0 else 0
     cum_rets = (returns + 1).cumprod()
     drawdown = (cum_rets / cum_rets.cummax() - 1).min()
@@ -100,7 +101,6 @@ def run_momentum_pure():
         # --- DASHBOARD DES MÉTRIQUES ---
         st.subheader("📊 Comparaison des Métriques Clés")
         
-        # Ligne 1 : Stratégie
         st.markdown("**🔹 Ma Stratégie**")
         col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
         col_s1.metric("CAGR", f"{m_s[0]*100:.2f}%")
@@ -109,22 +109,36 @@ def run_momentum_pure():
         col_s4.metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
         col_s5.metric("Transactions", f"{portfolio_changes}")
 
-        # Ligne 2 : S&P 500
         st.markdown("**🔸 S&P 500 (Benchmark)**")
         col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
         col_b1.metric("CAGR", f"{m_b[0]*100:.2f}%")
         col_b2.metric("Volatilité", f"{m_b[1]*100:.2f}%")
         col_b3.metric("Ratio Sharpe", f"{m_b[2]:.2f}")
         col_b4.metric("Max Drawdown", f"{m_b[3]*100:.2f}%")
-        col_b5.write("") # Vide pour l'alignement
+        col_b5.write("")
 
         st.divider()
-        st.line_chart((1 + df).cumprod() * 100)
+        
+        # --- GRAPHIQUES ---
+        col_left, col_right = st.columns(2)
+        
+        with col_left:
+            st.subheader("📈 Performance Cumulée")
+            st.line_chart((1 + df).cumprod() * 100)
+            
+        with col_right:
+            st.subheader("📉 Historique des Drawdowns (%)")
+            cum_strat = (1 + df['Strat']).cumprod()
+            dd_strat = (cum_strat / cum_strat.cummax() - 1) * 100
+            cum_spy = (1 + df['SPY']).cumprod()
+            dd_spy = (cum_spy / cum_spy.cummax() - 1) * 100
+            
+            dd_df = pd.DataFrame({'Stratégie': dd_strat, 'S&P 500': dd_spy})
+            st.area_chart(dd_df)
 
         # --- TABLEAU DES PERFORMANCES ANNUELLES ---
         st.subheader("📅 Performance Calendaire Annuelle")
-        annual_perf = df.copy()
-        annual_summary = annual_perf.groupby(annual_perf.index.year).apply(lambda x: (1 + x).prod() - 1)
+        annual_summary = df.groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
         annual_summary['Surperformance'] = annual_summary['Strat'] - annual_summary['SPY']
         
         annual_display = annual_summary.copy()
