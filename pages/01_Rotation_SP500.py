@@ -4,86 +4,131 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_rotation_page():
-    st.title("🚀 Stratégie de Rotation Sectorielle S&P 500")
-    st.write("Cet outil analyse les 11 secteurs du S&P 500 pour sélectionner les leaders par rapport au risque.")
+# Configuration de la page
+st.set_page_config(page_title="Momentum Pro SaaS", layout="wide")
 
-    # Sidebar pour les paramètres
-    with st.sidebar:
-        st.header("Paramètres")
-        lookback_period = st.slider("Période d'analyse (mois)", 1, 12, 3)
-        start_date = st.date_input("Date de début du backtest", pd.to_datetime("2019-01-01"))
+def calculate_metrics(returns):
+    """Calcule les métriques clés de performance"""
+    # Performance totale
+    total_return = (returns + 1).prod() - 1
+    # CAGR (Taux de croissance annuel composé)
+    n_years = len(returns) / 12
+    cagr = (total_return + 1) ** (1 / n_years) - 1
+    # Volatilité annualisée
+    vol = returns.std() * np.sqrt(12)
+    # Ratio de Sharpe (sans risque estimé à 2%)
+    sharpe = (cagr - 0.02) / vol if vol != 0 else 0
+    # Max Drawdown
+    cum_rets = (returns + 1).cumprod()
+    rolling_max = cum_rets.cummax()
+    drawdown = (cum_rets / rolling_max - 1).min()
+    
+    return cagr, vol, sharpe, drawdown, total_return
 
+def run_momentum_pro():
+    st.title("🛡️ Momentum Pro : Stratégie & Analytics")
+    
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
-    if st.button('Lancer l\'analyse et le Backtest'):
-        with st.spinner('Récupération des données boursières...'):
-            # Téléchargement sécurisé
-            all_tickers = sectors + ['SPY']
-            raw_data = yf.download(all_tickers, start=start_date, interval="1d")
+    @st.cache_data
+    def load_data():
+        # On télécharge un peu avant 1999 pour avoir les 3 mois de look-back dès le départ
+        data = yf.download(sectors + ['SPY'], start="1998-10-01")
+        if isinstance(data.columns, pd.MultiIndex):
+            close_prices = data['Close']
+            open_prices = data['Open']
+        else:
+            close_prices = data['Close']
+            open_prices = data['Open']
+        return close_prices.ffill(), open_prices.ffill()
+
+    try:
+        close_data, open_data = load_data()
+        monthly_close = close_data.resample('ME').last()
+        monthly_open = open_data.resample('MS').first()
+        momentum = monthly_close[sectors].pct_change(3)
+        
+        history = []
+        current_portfolio = {} 
+        
+        for i in range(3, len(monthly_close) - 1):
+            date_signal = monthly_close.index[i]
+            date_invest = monthly_open.index[i+1]
             
-            # Correction de l'erreur KeyError : On vérifie la structure des colonnes
-            if 'Adj Close' in raw_data.columns:
-                data = raw_data['Adj Close']
-            else:
-                data = raw_data['Close'] # Backup si Adj Close n'est pas dispo
-
-            # Nettoyage des données
-            data = data.ffill().dropna()
-
-            # Calcul des rendements mensuels
-            monthly_data = data.resample('ME').last()
-            monthly_returns = monthly_data.pct_change().dropna()
+            scores = momentum.iloc[i].sort_values(ascending=False)
+            top_2 = scores.index[:2].tolist()
+            top_4 = scores.index[:4].tolist()
             
-            strategy_returns = []
-
-            # Simulation du Backtest
-            for i in range(1, len(monthly_returns)):
-                # Calcul sur la période de lookback choisie
-                lookback = monthly_returns.iloc[max(0, i-lookback_period):i]
-                
-                # Calcul du score (Rendement / Volatilité)
-                # On ajoute une petite valeur pour éviter la division par zéro
-                sharpe_scores = lookback[sectors].mean() / (lookback[sectors].std() + 1e-6)
-                
-                # Top 3 secteurs
-                top_sectors = sharpe_scores.nlargest(3).index
-                
-                # Performance le mois suivant
-                next_month_ret = monthly_returns.iloc[i][top_sectors].mean()
-                strategy_returns.append(next_month_ret)
-
-            # Résultats finaux
-            results = pd.DataFrame({
-                'Stratégie': strategy_returns,
-                'S&P 500': monthly_returns['SPY'].iloc[1:].values
-            }, index=monthly_returns.index[1:])
+            new_portfolio = {}
+            for ticker, lots in current_portfolio.items():
+                if ticker in top_4:
+                    new_portfolio[ticker] = lots
+                    if ticker in top_2 and lots == 1:
+                        new_portfolio[ticker] = 2
             
-            cum_results = (1 + results).cumprod()
-
-            # --- AFFICHAGE ---
-            col1, col2 = st.columns(2)
-            final_strat = (cum_results['Stratégie'].iloc[-1] - 1) * 100
-            final_spy = (cum_results['S&P 500'].iloc[-1] - 1) * 100
+            for ticker in top_2:
+                if ticker not in new_portfolio:
+                    new_portfolio[ticker] = 1
             
-            col1.metric("Performance Stratégie", f"{final_strat:.2f}%", f"{final_strat - final_spy:.2f}% vs SPY")
-            col2.metric("Performance S&P 500", f"{final_spy:.2f}%")
-
-            # Graphique
-            st.subheader("Courbe de croissance cumulée")
-            st.line_chart(cum_results)
-
-            # Signal Actuel
-            st.divider()
-            st.subheader("🎯 Signal pour le mois actuel")
-            last_lookback = monthly_returns[sectors].tail(lookback_period)
-            current_scores = last_lookback.mean() / (last_lookback.std() + 1e-6)
-            best_now = current_scores.nlargest(3)
+            month_return = 0
+            num_lots_total = sum(new_portfolio.values())
             
-            cols = st.columns(3)
-            for i, (ticker, score) in enumerate(best_now.items()):
-                cols[i].success(f"Secteur {i+1} : **{ticker}**")
+            if num_lots_total > 0:
+                for ticker, lots in new_portfolio.items():
+                    # Rendement mensuel calculé d'ouverture à clôture suivante
+                    try:
+                        ret = (close_data[ticker].loc[monthly_close.index[i+1]] / open_data[ticker].loc[date_invest]) - 1
+                        month_return += (ret * (lots / num_lots_total))
+                    except: continue
+            
+            history.append({
+                'Date': monthly_close.index[i+1],
+                'Strat_Ret': month_return,
+                'SPY_Ret': (close_data['SPY'].loc[monthly_close.index[i+1]] / open_data['SPY'].loc[date_invest]) - 1
+            })
+            current_portfolio = new_portfolio
 
-# Lancement
+        df_res = pd.DataFrame(history).set_index('Date')
+        
+        # --- CALCUL DES METRIQUES ---
+        m_strat = calculate_metrics(df_res['Strat_Ret'])
+        m_spy = calculate_metrics(df_res['SPY_Ret'])
+
+        # --- AFFICHAGE DASHBOARD ---
+        st.subheader("📊 Comparatif de Performance (1999 - Présent)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("CAGR Stratégie", f"{m_strat[0]*100:.2f}%", f"{(m_strat[0]-m_spy[0])*100:.2f}% vs SPY")
+        col2.metric("Sharpe Ratio", f"{m_strat[2]:.2f}", f"{(m_strat[2]-m_spy[2]):.2f} pts")
+        col3.metric("Max Drawdown", f"{m_strat[3]*100:.2f}%", f"{(m_strat[3]-m_spy[3])*100:.2f}% pts", delta_color="inverse")
+        col4.metric("Performance Totale", f"{m_strat[4]*100:.1f}%")
+
+        # --- TABLEAU RECAPITULATIF ---
+        metrics_table = pd.DataFrame({
+            'Métrique': ['Performance Totale', 'CAGR (Rendement Annuel)', 'Ratio de Sharpe', 'Max Drawdown (Risque)'],
+            'Stratégie Momentum': [f"{m_strat[4]*100:.1f}%", f"{m_strat[0]*100:.2f}%", f"{m_strat[2]:.2f}", f"{m_strat[3]*100:.2f}%"],
+            'S&P 500 (Buy & Hold)': [f"{m_spy[4]*100:.1f}%", f"{m_spy[0]*100:.2f}%", f"{m_spy[2]:.2f}", f"{m_spy[3]*100:.2f}%"]
+        })
+        st.table(metrics_table)
+
+        # Graphique
+        st.line_chart(pd.DataFrame({
+            'Stratégie': (1 + df_res['Strat_Ret']).cumprod() * 100,
+            'S&P 500': (1 + df_res['SPY_Ret']).cumprod() * 100
+        }))
+
+        # Signaux du mois (le plus important pour l'abonnement)
+        st.divider()
+        st.subheader("🎯 Signaux pour le mois suivant")
+        last_m = momentum.iloc[-1].sort_values(ascending=False)
+        st.info(f"Analyse basée sur la clôture du {monthly_close.index[-1].date()}")
+        
+        c1, c2 = st.columns(2)
+        c1.success(f"🔥 **PYRAMIDE (Top 2) :** {last_m.index[0]}, {last_m.index[1]}")
+        c2.warning(f"🛡️ **BUFFER (Top 4) :** {', '.join(last_m.index[:4])}")
+
+    except Exception as e:
+        st.error(f"Erreur : {e}")
+
 if __name__ == "__main__":
-    run_rotation_page()
+    run_momentum_pro()
