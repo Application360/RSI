@@ -5,7 +5,7 @@ import numpy as np
 from datetime import date
 
 # 1. Configuration de la page
-st.set_page_config(page_title="Momentum & Market Timing", layout="wide")
+st.set_page_config(page_title="Momentum Analytics Pro", layout="wide")
 
 def calculate_metrics(returns):
     """Calcule les métriques de performance de manière sécurisée"""
@@ -23,47 +23,40 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Sectoriel avec Filtre de Tendance MM")
+    st.title("🚀 Momentum Sectoriel & Market Timing Pro")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
     # --- BARRE LATÉRALE ---
     with st.sidebar:
-        st.header("⚙️ Paramètres")
-        n_top = st.slider("Nombre de secteurs à détenir", 1, 5, 2)
-        lookback = st.slider("Période Momentum (Look-back mois)", 1, 12, 6)
-        holding_period = st.slider("Durée de détention (Holding mois)", 1, 12, 9)
+        st.header("⚙️ Paramètres Stratégie")
+        n_top = st.slider("Nombre de secteurs", 1, 5, 2)
+        lookback = st.slider("Look-back (mois)", 1, 12, 6)
+        holding_period = st.slider("Holding (mois)", 1, 12, 9)
         fees_pct = st.slider("Frais par transaction (%)", 0.0, 1.0, 0.1, step=0.05) / 100
         
         st.divider()
-        st.header("🛡️ Protection (Market Timing)")
-        # NOUVEAU : Slider pour la Moyenne Mobile
+        st.header("🛡️ Filtre de Tendance")
         sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150)
         
         st.divider()
         start_date = st.date_input("Date de début", value=date(1999, 1, 1))
         end_date = st.date_input("Date de fin", value=date(2026, 12, 31))
 
-    if start_date >= end_date:
-        st.error("La date de début doit être antérieure à la date de fin.")
-        return
-
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
-        # Marge pour le momentum ET pour la moyenne mobile (250 jours max)
-        margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 30, sma_p) + 20)
+        # Marge de sécurité pour calculs initiaux
+        margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 40)
         data = yf.download(sectors + ['SPY'], start=margin_start, end=e_date, progress=False)
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
         
         closes = data['Close'].ffill()
         opens = data['Open'].ffill()
-        # Calcul de la MM sur les prix quotidiens du SPY
         spy_sma = closes['SPY'].rolling(window=sma_p).mean()
-        
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Analyse des tendances en cours...'):
+        with st.spinner('Simulation du backtest...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
@@ -72,7 +65,7 @@ def run_momentum_pure():
             
             history = []
             portfolio_changes = 0
-            current_top = [] # Si vide = Cash
+            current_top = []
             
             start_dt = pd.to_datetime(start_date)
             valid_start_idx = lookback
@@ -85,118 +78,90 @@ def run_momentum_pure():
                 monthly_fees = 0
                 dt_now = monthly_close.index[i]
                 
-                # --- LOGIQUE DE REBALANCEMENT & FILTRE ---
+                # --- CORRECTION ROBUSTE DES DATES ---
+                # On utilise ffill pour trouver la valeur SMA/Prix la plus proche (évite bug week-ends)
+                idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
+                price_spy = close_data['SPY'].iloc[idx_ref]
+                val_sma = spy_sma.iloc[idx_ref]
+
+                # --- REBALANCEMENT ---
                 if (i - valid_start_idx) % holding_period == 0:
-                    # Vérification du filtre de tendance : SPY > sa MM ?
-                    is_market_bull = close_data['SPY'].loc[dt_now] > spy_sma.loc[dt_now]
+                    is_market_bull = price_spy > val_sma
                     
                     if is_market_bull:
                         scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                         new_top = scores.index[:n_top].tolist()
                         
-                        # Calcul des frais si changement
                         if current_top:
                             num_changes = len([s for s in new_top if s not in current_top])
-                            if num_changes > 0:
-                                portfolio_changes += num_changes
-                                monthly_fees = (num_changes / n_top) * fees_pct
+                            portfolio_changes += num_changes
+                            monthly_fees = (num_changes / n_top) * fees_pct
                         else:
-                            # Entrée sur le marché (Cash -> Actions)
-                            portfolio_changes += n_top
+                            portfolio_changes += n_top # Entrée initiale
                             monthly_fees = fees_pct
                         current_top = new_top
                     else:
-                        # LE MARCHE EST SOUS LA MM -> PASSAGE EN CASH
                         if current_top:
-                            # On vend tout : frais de sortie
-                            portfolio_changes += len(current_top)
+                            portfolio_changes += len(current_top) # Vente totale
                             monthly_fees = fees_pct 
-                        current_top = [] # Portefeuille vide = 0% rendement
+                        current_top = []
 
-                # --- CALCUL DU RENDEMENT MENSUEL ---
+                # --- PERFORMANCE MENSUELLE ---
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
                     
-                    if current_top:
-                        gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top
-                    else:
-                        gross_ret = 0.0 # On est en cash
-                    
-                    strat_ret_net = gross_ret - monthly_fees
+                    gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top if current_top else 0.0
                     spy_ret = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
-                    
-                    history.append({'Date': monthly_close.index[i+1], 'Strat': strat_ret_net, 'SPY': spy_ret, 'InMarket': len(current_top) > 0})
+                    history.append({'Date': monthly_close.index[i+1], 'Strat': gross_ret - monthly_fees, 'SPY': spy_ret})
                 except: continue
 
         if not history:
-            st.warning("Données insuffisantes.")
+            st.warning("Données insuffisantes pour cette période.")
             return
 
         df = pd.DataFrame(history).set_index('Date')
         m_s = calculate_metrics(df['Strat'])
         m_b = calculate_metrics(df['SPY'])
 
-        # --- DASHBOARD ---
-        st.subheader("📊 Métriques Clés (Avec Filtre MM)")
+        # --- AFFICHAGE DASHBOARD ---
+        st.subheader("📊 Comparaison des Performances")
         
-        c_s, c_b = st.columns(2)
-        with c_s:
-            st.markdown(f"**🔹 Ma Stratégie (MM {sma_period}j)**")
-            cols = st.columns(4)
-            cols[0].metric("CAGR Net", f"{m_s[0]*100:.2f}%")
-            cols[1].metric("Volatilité", f"{m_s[1]*100:.2f}%")
-            cols[2].metric("Ratio Sharpe", f"{m_s[2]:.2f}")
-            cols[3].metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
-        
-        with c_b:
-            st.markdown("**🔸 S&P 500 (Benchmark)**")
-            cols = st.columns(4)
-            cols[0].metric("CAGR", f"{m_b[0]*100:.2f}%")
-            cols[1].metric("Volatilité", f"{m_b[1]*100:.2f}%")
-            cols[2].metric("Ratio Sharpe", f"{m_b[2]:.2f}")
-            cols[3].metric("Max Drawdown", f"{m_b[3]*100:.2f}%")
+        # Métriques Stratégie
+        st.markdown("**🔹 Ma Stratégie (Nette de frais)**")
+        cs = st.columns(5)
+        cs[0].metric("CAGR", f"{m_s[0]*100:.2f}%")
+        cs[1].metric("Volatilité", f"{m_s[1]*100:.2f}%")
+        cs[2].metric("Sharpe", f"{m_s[2]:.2f}")
+        cs[3].metric("Max DD", f"{m_s[3]*100:.2f}%")
+        cs[4].metric("Transactions", f"{portfolio_changes}")
+
+        # Métriques S&P 500
+        st.markdown("**🔸 S&P 500 (Benchmark)**")
+        cb = st.columns(5)
+        cb[0].metric("CAGR", f"{m_b[0]*100:.2f}%")
+        cb[1].metric("Volatilité", f"{m_b[1]*100:.2f}%")
+        cb[2].metric("Ratio Sharpe", f"{m_b[2]:.2f}")
+        cb[3].metric("Max Drawdown", f"{m_b[3]*100:.2f}%")
+        cb[4].write("")
 
         st.divider()
-        
+
         # --- GRAPHIQUES ---
-        col_l, col_r = st.columns(2)
-        with col_l:
+        g1, g2 = st.columns(2)
+        with g1:
             st.subheader("📈 Performance Cumulée")
-            st.line_chart((1 + df[['Strat', 'SPY']]).cumprod() * 100)
-        with col_r:
-            st.subheader("📉 Risque : Drawdown Historique")
-            cum_strat = (1 + df['Strat']).cumprod()
-            dd_strat = (cum_strat / cum_strat.cummax() - 1) * 100
-            cum_spy = (1 + df['SPY']).cumprod()
-            dd_spy = (cum_spy / cum_spy.cummax() - 1) * 100
-            st.area_chart(pd.DataFrame({'Stratégie': dd_strat, 'S&P 500': dd_spy}))
+            st.line_chart((1 + df).cumprod() * 100)
+        with g2:
+            st.subheader("📉 Risque : Drawdown Historique (%)")
+            dd_df = pd.DataFrame({
+                'Stratégie': ((1 + df['Strat']).cumprod() / (1 + df['Strat']).cumprod().cummax() - 1) * 100,
+                'S&P 500': ((1 + df['SPY']).cumprod() / (1 + df['SPY']).cumprod().cummax() - 1) * 100
+            })
+            st.area_chart(dd_df)
 
         # --- TABLEAU ANNUEL ---
-        st.subheader("📅 Détail Annuel & Surperformance")
-        annual_summary = df[['Strat', 'SPY']].groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
-        annual_summary['Alpha'] = annual_summary['Strat'] - annual_summary['SPY']
-        
-        display_tab = annual_summary.copy()
-        for col in display_tab.columns:
-            display_tab[col] = display_tab[col].map(lambda x: f"{x*100:.2f}%")
-        
-        st.table(display_tab.sort_index(ascending=False))
-
-        # --- STATUS ACTUEL ---
-        st.divider()
-        st.subheader("🛡️ État actuel du système")
-        is_bull = close_data['SPY'].iloc[-1] > spy_sma.iloc[-1]
-        if is_bull:
-            st.success(f"✅ MARCHÉ HAUSSIER : SPY ({close_data['SPY'].iloc[-1]:.2f}) > MM{sma_period} ({spy_sma.iloc[-1]:.2f})")
-            st.info(f"Secteurs à détenir : {', '.join(current_top) if current_top else 'Calcul en cours...'}")
-        else:
-            st.warning(f"⚠️ MARCHÉ BAISSIER : SPY ({close_data['SPY'].iloc[-1]:.2f}) < MM{sma_period} ({spy_sma.iloc[-1]:.2f})")
-            st.error("🚀 POSITION ACTUELLE : CASH (0% exposition)")
-
-    except Exception as e:
-        st.error(f"Erreur : {e}")
-
-if __name__ == "__main__":
-    run_momentum_pure()
+        st.subheader("📅 Tableau de Performance Annuelle")
+        annual = df.groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
+        annual['Alpha'] = annual['Strat'] - annual
