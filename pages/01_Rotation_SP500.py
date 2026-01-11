@@ -23,7 +23,7 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Rotation Lente & Sécurité Réactive")
+    st.title("🚀 Momentum Pro : Couleurs Synchronisées & Analyse de Risque")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -56,7 +56,7 @@ def run_momentum_pure():
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Analyse des cycles en cours...'):
+        with st.spinner('Synchronisation des données...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
@@ -109,61 +109,70 @@ def run_momentum_pure():
                     gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top if is_invested else 0.0
                     history.append({
                         'Date': monthly_close.index[i+1], 
-                        'Strat': gross_ret - monthly_fees, 
-                        'SPY': (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
+                        'Ma Stratégie': gross_ret - monthly_fees, 
+                        'S&P 500': (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
                     })
                 except: continue
 
-        if not history:
-            st.warning("Données insuffisantes.")
-            return
-
         df = pd.DataFrame(history).set_index('Date')
-        m_s = calculate_metrics(df['Strat'])
-        m_b = calculate_metrics(df['SPY'])
+        m_s = calculate_metrics(df['Ma Stratégie'])
+        m_b = calculate_metrics(df['S&P 500'])
 
         # --- DASHBOARD ---
-        st.subheader("📊 Métriques Stratégie vs S&P 500")
+        st.subheader("📊 Métriques Comparatives")
         
-        st.markdown(f"### 🔹 Ma Stratégie (Rotation {holding_period}m / Sécurité Mensuelle)")
-        c = st.columns(6)
-        c[0].metric("Performance Totale", f"{m_s[4]*100:.2f}%")
-        c[1].metric("CAGR Net", f"{m_s[0]*100:.2f}%")
-        c[2].metric("Ratio Sharpe", f"{m_s[2]:.2f}")
-        c[3].metric("Max Drawdown", f"{m_s[3]*100:.2f}%")
-        c[4].metric("Volatilité", f"{m_s[1]*100:.2f}%")
-        c[5].metric("Transactions", portfolio_changes)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"### 🔹 Ma Stratégie")
+            mc1 = st.columns(3)
+            mc1[0].metric("Perf. Totale", f"{m_s[4]*100:.1f}%")
+            mc1[1].metric("CAGR Net", f"{m_s[0]*100:.2f}%")
+            mc1[2].metric("Sharpe", f"{m_s[2]:.2f}")
+            mc2 = st.columns(3)
+            mc2[0].metric("Max DD", f"{m_s[3]*100:.1f}%")
+            mc2[1].metric("Volatilité", f"{m_s[1]*100:.1f}%")
+            mc2[2].metric("Trades", portfolio_changes)
         
-        st.markdown("---")
-
-        st.markdown("### 🔸 S&P 500")
-        b = st.columns(6)
-        b[0].metric("Performance Totale", f"{m_b[4]*100:.2f}%")
-        b[1].metric("CAGR", f"{m_b[0]*100:.2f}%")
-        b[2].metric("Ratio Sharpe", f"{m_b[2]:.2f}")
-        b[3].metric("Max Drawdown", f"{m_b[3]*100:.2f}%")
-        b[4].metric("Volatilité", f"{m_b[1]*100:.2f}%")
-        b[5].write("") 
+        with c2:
+            st.markdown(f"### 🔸 S&P 500")
+            bc1 = st.columns(3)
+            bc1[0].metric("Perf. Totale", f"{m_b[4]*100:.1f}%")
+            bc1[1].metric("CAGR", f"{m_b[0]*100:.2f}%")
+            bc1[2].metric("Sharpe", f"{m_b[2]:.2f}")
+            bc2 = st.columns(3)
+            bc2[0].metric("Max DD", f"{m_b[3]*100:.1f}%")
+            bc2[1].metric("Volatilité", f"{m_b[1]*100:.1f}%")
 
         st.divider()
 
-        # --- GRAPHIQUES ---
+        # --- GRAPHIQUES AVEC COULEURS FIXES ---
+        # Définition des couleurs : Stratégie = Bleu (#0077b6), SP500 = Orange (#f39c12)
+        chart_colors = ["#0077b6", "#f39c12"]
+
         g1, g2 = st.columns(2)
         with g1:
-            st.subheader("📈 Performance Cumulée")
-            st.line_chart((1 + df[['Strat', 'SPY']]).cumprod() * 100)
+            st.subheader("📈 Performance Cumulée (Base 100)")
+            cum_perf = (1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100
+            st.line_chart(cum_perf, color=chart_colors)
+
         with g2:
-            st.subheader("📉 Risque : Drawdown Historique (%)")
-            # Calcul du drawdown
-            dd_strat = ((1 + df['Strat']).cumprod() / (1 + df['Strat']).cumprod().cummax() - 1) * 100
-            dd_spy = ((1 + df['SPY']).cumprod() / (1 + df['SPY']).cumprod().cummax() - 1) * 100
-            # Utilisation de st.line_chart au lieu de st.area_chart
-            st.line_chart(pd.DataFrame({'Ma Stratégie': dd_strat, 'S&P 500': dd_spy}))
+            st.subheader("📉 Drawdown Historique (%)")
+            dd_strat = ((1 + df['Ma Stratégie']).cumprod() / (1 + df['Ma Stratégie']).cumprod().cummax() - 1) * 100
+            dd_spy = ((1 + df['S&P 500']).cumprod() / (1 + df['S&P 500']).cumprod().cummax() - 1) * 100
+            
+            dd_df = pd.DataFrame({
+                'Ma Stratégie': dd_strat,
+                'S&P 500': dd_spy,
+                'Seuil Bear Market (-20%)': -20 # Ajout d'une ligne de référence
+            })
+            
+            # On utilise 3 couleurs ici : Bleu, Orange et Rouge pour le seuil
+            st.line_chart(dd_df, color=["#0077b6", "#f39c12", "#e74c3c"])
 
         # --- TABLEAU ANNUEL ---
         st.subheader("📅 Détail Annuel & Alpha")
-        annual = df[['Strat', 'SPY']].groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
-        annual['Alpha'] = annual['Strat'] - annual['SPY']
+        annual = df[['Ma Stratégie', 'S&P 500']].groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
+        annual['Alpha'] = annual['Ma Stratégie'] - annual['S&P 500']
 
         def highlight_alpha(val):
             return 'background-color: #2ecc71; color: white' if val >= 0 else ''
@@ -175,12 +184,11 @@ def run_momentum_pure():
 
         # --- ÉTAT ACTUEL ---
         st.divider()
-        st.subheader(f"🎯 État du système")
+        st.subheader(f"🎯 Signal Actuel")
         if is_invested:
-            st.success(f"✅ ÉTAT : INVESTI (SPY > MM{sma_period})")
-            st.info(f"🚀 **Secteurs sélectionnés :** {', '.join(current_top)}")
+            st.success(f"✅ MARCHÉ BULL : Investi dans {', '.join(current_top)}")
         else:
-            st.error(f"🛡️ ÉTAT : CASH (SPY < MM{sma_period})")
+            st.error(f"🛡️ MARCHÉ BEAR : Position 100% Cash")
 
     except Exception as e:
         st.error(f"Erreur technique : {e}")
