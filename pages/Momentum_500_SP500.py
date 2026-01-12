@@ -3,7 +3,6 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import date
-import bs4 as bs
 import requests
 
 # 1. Configuration de la page
@@ -11,17 +10,20 @@ st.set_page_config(page_title="S&P 500 Stock Momentum Pro", layout="wide")
 
 @st.cache_data
 def get_sp500_tickers():
-    """Récupère la liste actuelle des tickers du S&P 500 via Wikipedia"""
+    """Récupère la liste des tickers du S&P 500 de manière robuste"""
     try:
-        resp = requests.get('http://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        # Utilisation de 'html.parser' au lieu de 'lxml' pour éviter les erreurs de dépendances
-        soup = bs.BeautifulSoup(resp.text, 'html.parser')
-        table = soup.find('table', {'class': 'wikitable sortable'})
-        tickers = []
-        for row in table.findAll('tr')[1:]:
-            ticker = row.findAll('td')[0].text.replace('\n', '')
-            ticker = ticker.replace('.', '-')
-            tickers.append(ticker)
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        # On ajoute un User-Agent pour éviter d'être bloqué par Wikipédia
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(url, headers=headers)
+        
+        # Utilisation de pandas pour lire le tableau directement (plus fiable)
+        tables = pd.read_html(response.text)
+        df = tables[0]
+        
+        tickers = df['Symbol'].tolist()
+        # Nettoyage des tickers pour Yahoo Finance (BRK.B -> BRK-B)
+        tickers = [t.replace('.', '-') for t in tickers]
         return tickers
     except Exception as e:
         st.error(f"Erreur lors de la récupération des tickers : {e}")
@@ -42,7 +44,6 @@ def calculate_metrics(returns):
 def run_stock_momentum():
     st.title("🦅 S&P 500 Stock Momentum : Analyse 1960-2026")
     
-    # --- BARRE LATÉRALE ---
     with st.sidebar:
         st.header("⚙️ Configuration")
         n_top = st.slider("Nombre d'actions à détenir", 1, 10, 5)
@@ -58,21 +59,20 @@ def run_stock_momentum():
         st.divider()
         st.header("📅 Période")
         min_date = date(1962, 1, 1)
-        start_date = st.date_input("Date de début", value=date(2010, 1, 1), min_value=min_date)
+        start_date = st.date_input("Date de début", value=date(2015, 1, 1), min_value=min_date)
         end_date = st.date_input("Date de fin", value=date(2026, 12, 31))
 
-    # --- CHARGEMENT DES DONNÉES ---
     tickers = get_sp500_tickers()
     if not tickers:
+        st.warning("La liste des tickers est vide. Vérifiez votre connexion.")
         return
 
     @st.cache_data(show_spinner=False)
     def load_stock_data(tickers_list, s_date, e_date, lb_period, sma_p):
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 90)
-        # Téléchargement
         data = yf.download(tickers_list + ['SPY'], start=margin_start, end=e_date, interval="1d", progress=False)
         
-        if 'Close' not in data:
+        if data.empty or 'Close' not in data:
             return pd.DataFrame(), pd.DataFrame(), pd.Series()
             
         closes = data['Close'].ffill()
@@ -81,11 +81,11 @@ def run_stock_momentum():
         return closes, opens, spy_sma
 
     try:
-        with st.spinner(f'Téléchargement de {len(tickers)} actions...'):
+        with st.spinner(f'Analyse de {len(tickers)} actions en cours...'):
             close_data, open_data, spy_sma = load_stock_data(tickers, start_date, end_date, lookback, sma_period)
             
             if close_data.empty:
-                st.error("Données vides. Essayez une période plus récente.")
+                st.error("Aucune donnée téléchargée.")
                 return
 
             monthly_close = close_data.resample('ME').last()
@@ -96,7 +96,6 @@ def run_stock_momentum():
             is_invested = False
             start_dt = pd.to_datetime(start_date)
             
-            # Trouver l'index de départ valide
             valid_indices = [i for i, dt in enumerate(monthly_close.index) if dt >= start_dt and i >= lookback]
 
             for count, i in enumerate(valid_indices[:-1]):
@@ -117,16 +116,17 @@ def run_stock_momentum():
                         monthly_fees += (num_changes / n_top) * fees_pct
                     current_top = new_top
 
-                # Entrée/Sortie
+                # Signal
                 if market_is_bull and not is_invested:
                     is_invested, monthly_fees = True, monthly_fees + fees_pct
                 elif not market_is_bull and is_invested:
                     is_invested, monthly_fees = False, monthly_fees + fees_pct
 
-                # Rendements
+                # Perf
                 d_start, d_end = monthly_close.index[i], monthly_close.index[i+1]
                 if is_invested and current_top:
-                    gross_ret = (close_data[current_top].asof(d_end) / open_data[current_top].asof(d_start) - 1).mean()
+                    available_stocks = [s for s in current_top if s in close_data.columns]
+                    gross_ret = (close_data[available_stocks].asof(d_end) / open_data[available_stocks].asof(d_start) - 1).mean()
                 else:
                     gross_ret = 0.0
                 
@@ -136,13 +136,21 @@ def run_stock_momentum():
                     'S&P 500': (close_data['SPY'].asof(d_end) / open_data['SPY'].asof(d_start)) - 1
                 })
 
-            # Dashboard
             df_res = pd.DataFrame(history).set_index('Date')
-            st.line_chart((1 + df_res).cumprod())
             
+            # --- Affichage des Résultats ---
+            c1, c2 = st.columns(2)
             m_s = calculate_metrics(df_res['Stratégie'])
-            st.write(f"**CAGR :** {m_s[0]*100:.2f}% | **Max Drawdown :** {m_s[3]*100:.1f}%")
-            st.success(f"Dernière sélection : {', '.join(current_top)}")
+            m_b = calculate_metrics(df_res['S&P 500'])
+            
+            with c1:
+                st.metric("CAGR Stratégie", f"{m_s[0]*100:.2f}%", f"{m_s[0]-m_b[0]:.2f}% vs Bench")
+                st.line_chart((1 + df_res).cumprod())
+            
+            with c2:
+                st.metric("Max Drawdown", f"{m_s[3]*100:.1f}%")
+                st.subheader("Dernière Sélection")
+                st.write(", ".join(current_top))
 
     except Exception as e:
         st.error(f"Erreur d'exécution : {e}")
