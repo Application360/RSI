@@ -33,7 +33,7 @@ def run_momentum_pure():
         n_top = st.slider("Nombre de secteurs à détenir", 1, 5, 2)
         lookback = st.slider("Look-back Momentum (mois)", 1, 12, 6)
         holding_period = st.slider("Fréquence rotation secteurs (mois)", 1, 12, 9)
-        fees_pct = st.slider("Frais par transaction (%)", 0.0, 1.0, 0.1, step=0.05) / 100
+        fees_pct = st.slider("Frais par transaction (%)", 0.0, 0.5, 0.1, step=0.01) / 100
         
         st.divider()
         st.header("🛡️ Market Timing (Mensuel)")
