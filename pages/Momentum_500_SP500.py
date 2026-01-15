@@ -3,11 +3,12 @@ import pandas as pd
 import yfinance as yf
 import requests
 from datetime import datetime
+import time
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="Momentum 500 - Étape 3", layout="wide")
+st.set_page_config(page_title="Momentum 500 - Étape 3 (Fix)", layout="wide")
 
-# --- 2. SIDEBAR (Paramètres de l'étape 2) ---
+# --- 2. SIDEBAR ---
 st.sidebar.header("⚙️ Paramètres")
 num_assets = st.sidebar.slider("Nombre d'actions à détenir", 1, 20, 10)
 lookback_months = st.sidebar.slider("Période d'analyse Momentum (mois)", 1, 12, 6)
@@ -18,7 +19,7 @@ st.sidebar.markdown("---")
 start_input = st.sidebar.text_input("Date de début", "1980/01/01")
 end_input = st.sidebar.text_input("Date de fin", datetime.now().strftime("%Y/%m/%d"))
 
-# --- 3. LOGIQUE DE TÉLÉCHARGEMENT ---
+# --- 3. FONCTIONS DE RÉCUPÉRATION ---
 
 @st.cache_data
 def get_sp500_tickers():
@@ -28,55 +29,73 @@ def get_sp500_tickers():
     df = pd.read_html(response.text)[0]
     return df['Symbol'].str.replace('.', '-', regex=True).tolist()
 
-@st.cache_data(show_spinner=False)
-def download_monthly_data(tickers, start, end):
-    s_date = start.replace('/', '-')
-    e_date = end.replace('/', '-')
+def download_with_retry(tickers, start, end):
+    """Télécharge les données par paquets pour éviter les erreurs HTTP/Timeout"""
+    all_opens = []
+    all_closes = []
     
-    # On télécharge l'indice de référence (^GSPC)
-    mkt_data = yf.download("^GSPC", start=s_date, end=e_date, interval="1mo", progress=False)
+    # Création de paquets de 50 tickers
+    chunk_size = 50
+    ticker_chunks = [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
     
-    # Téléchargement groupé des 500 actions
-    # On récupère Open et Close pour répondre à votre besoin de précision
-    with st.spinner("Téléchargement des données mensuelles (Open/Close) pour 500 actions..."):
-        raw_data = yf.download(tickers, start=s_date, end=e_date, interval="1mo", progress=False)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     
-    return raw_data, mkt_data
+    for i, chunk in enumerate(ticker_chunks):
+        status_text.text(f"Téléchargement du groupe {i+1}/{len(ticker_chunks)}...")
+        try:
+            # Téléchargement uniquement de Open et Close en mensuel
+            chunk_data = yf.download(chunk, start=start, end=end, interval="1mo", progress=False)[['Open', 'Close']]
+            
+            if not chunk_data.empty:
+                all_opens.append(chunk_data['Open'])
+                all_closes.append(chunk_data['Close'])
+            
+            # Petite pause pour ne pas être banni par Yahoo
+            time.sleep(0.5)
+        except Exception as e:
+            st.warning(f"Erreur sur le groupe {i+1}: {e}")
+        
+        progress_bar.progress((i + 1) / len(ticker_chunks))
+    
+    if not all_opens or not all_closes:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Fusion des résultats
+    full_opens = pd.concat(all_opens, axis=1)
+    full_closes = pd.concat(all_closes, axis=1)
+    
+    return full_opens, full_closes
 
 # --- 4. EXÉCUTION ---
-st.title("🚀 Momentum 500 : Étape 3")
-st.write("Chargement des données historiques (Clôture et Ouverture du mois suivant)")
+st.title("🚀 Momentum 500 : Étape 3 (Optimisée)")
+st.write("Chargement robuste des données (Open/Close) par paquets de 50.")
 
 tickers = get_sp500_tickers()
 
-if st.button("Lancer le téléchargement des données"):
-    data, mkt = download_monthly_data(tickers, start_input, end_input)
+if st.button("Lancer le téléchargement sécurisé"):
+    s_date = start_input.replace('/', '-')
+    e_date = end_input.replace('/', '-')
     
-    if not data.empty:
-        st.success("✅ Téléchargement terminé avec succès !")
+    # Téléchargement de l'indice séparément
+    mkt = yf.download("^GSPC", start=s_date, end=e_date, interval="1mo", progress=False)
+    
+    # Téléchargement des 500 actions
+    opens, closes = download_with_retry(tickers, s_date, e_date)
+    
+    if not opens.empty and not closes.empty:
+        st.success(f"✅ Téléchargement réussi ! ({len(closes.columns)} actions récupérées)")
         
-        # Extraction des clôtures et ouvertures
-        # Note : yfinance renvoie un MultiIndex [Price, Ticker]
-        closes = data['Close']
-        opens = data['Open']
-        
-        # Affichage des structures pour vérification
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write("**Aperçu des cours de clôture (Closes) :**")
+        # Aperçu pour vérification
+        tab1, tab2 = st.tabs(["📊 Cours de Clôture", "📈 Cours d'Ouverture"])
+        with tab1:
             st.dataframe(closes.tail(), use_container_width=True)
-        with col2:
-            st.write("**Aperçu des cours d'ouverture (Opens) :**")
+        with tab2:
             st.dataframe(opens.tail(), use_container_width=True)
             
-        # Stockage temporaire en session pour l'étape suivante
+        # Sauvegarde en session pour l'étape 4
         st.session_state['closes'] = closes
         st.session_state['opens'] = opens
         st.session_state['mkt'] = mkt
     else:
-        st.error("Le téléchargement a échoué. Vérifiez votre connexion ou les dates.")
-
-elif 'closes' in st.session_state:
-    st.info("Données déjà présentes en mémoire.")
-else:
-    st.warning("Cliquez sur le bouton ci-dessus pour charger les données (cela peut prendre 1 à 2 minutes la première fois).")
+        st.error("Échec du téléchargement. Yahoo Finance a rejeté la demande ou les dates sont invalides.")
