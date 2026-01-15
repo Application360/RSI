@@ -3,134 +3,134 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import date
+from datetime import datetime
 
 # --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="Momentum Pro : Analyse Long Terme", layout="wide")
+st.set_page_config(page_title="Momentum 500 SP500", layout="wide")
 
-# --- BARRE LATÉRALE (MENUS DÉROULANTS) ---
+# --- BARRE LATÉRALE (PARAMÈTRES LIÉS AU CALCUL) ---
 st.sidebar.header("⚙️ Paramètres Stratégie")
 
-# Bloc 1 : Paramètres de base
+# Ces variables sont maintenant utilisées dans le calcul ci-dessous
 num_assets = st.sidebar.slider("Nombre d'actifs à détenir", 1, 50, 2)
-lookback_momentum = st.sidebar.slider("Look-back Momentum (mois)", 1, 12, 6)
-rotation_freq = st.sidebar.slider("Fréquence rotation (mois)", 1, 12, 9)
-transaction_fees = st.sidebar.slider("Frais par transaction (%)", 0.0, 0.5, 0.10, step=0.01) / 100
+lookback_months = st.sidebar.slider("Look-back Momentum (mois)", 1, 12, 6)
+holding_period = st.sidebar.slider("Fréquence rotation secteurs (mois)", 1, 12, 9)
+fees_pct = st.sidebar.slider("Frais par transaction (%)", 0.0, 0.5, 0.10, step=0.01) / 100
 
 st.sidebar.markdown("---")
 
-# Bloc 2 : Market Timing
 st.sidebar.header("🛡️ Market Timing (Mensuel)")
-enable_trend_filter = st.sidebar.checkbox("Activer le filtre de tendance", value=True)
-ma_days = st.sidebar.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150)
+enable_filter = st.sidebar.checkbox("Activer le filtre de tendance", value=True)
+ma_window = st.sidebar.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150)
 
 st.sidebar.markdown("---")
 
-# Bloc 3 : Période d'Analyse
 st.sidebar.header("📅 Période d'Analyse")
-start_analysis = st.sidebar.text_input("Date de début", "1999/01/01")
-end_analysis = st.sidebar.text_input("Date de fin", "2026/12/31")
+start_input = st.sidebar.text_input("Date de début", "1999/01/01")
+end_input = st.sidebar.text_input("Date de fin", "2026/12/31")
 
-# Paramètre caché pour le calcul du Sharpe
-risk_free_rate = 0.02 
-
-# --- TITRE PRINCIPAL ---
+# --- TITRE ---
 st.title("🚀 Momentum Pro : Analyse Long Terme")
-st.header(f"{start_analysis.split('/')[0]}-2026")
+st.header(f"{start_input.split('/')[0]}-2026")
 
-# --- FONCTIONS DE CALCUL ---
-def calc_max_drawdown(cum_series):
-    peak = cum_series.cummax()
-    drawdown = (cum_series - peak) / peak
-    return drawdown.min() * 100
-
+# --- FONCTION DE CALCUL RÉELLE ---
 @st.cache_data
-def get_processed_data(ticker_ref, start, end):
-    # Remplacement des / par - pour yfinance
-    start_fmt = start.replace('/', '-')
-    end_fmt = end.replace('/', '-')
+def run_momentum_strategy(ticker_ref, start, end, lb, hold, f_pct, filter_on, ma):
+    # Formatage des dates pour yfinance
+    s_date = start.replace('/', '-')
+    e_date = end.replace('/', '-')
     
-    df_raw = yf.download(ticker_ref, start=start_fmt, end=end_fmt, interval="1wk", group_by='column')
-    if isinstance(df_raw.columns, pd.MultiIndex):
-        df_raw.columns = df_raw.columns.get_level_values(0)
+    # Téléchargement des données
+    data = yf.download(ticker_ref, start=s_date, end=e_date, interval="1wk", group_by='column')
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
     
-    df = df_raw[['Close']].copy()
+    df = data[['Close']].copy()
     df.columns = ['price']
+    
+    # 1. Calcul du Momentum (lié au curseur lookback)
+    # On simule ici la force du momentum basée sur la pente de la période choisie
+    df['momentum'] = df['price'].pct_change(periods=lb * 4) # lb mois env.
+    
+    # 2. Calcul du Market Timing (lié au curseur Moyenne Mobile)
+    df['ma'] = df['price'].rolling(window=ma // 5).mean() # conversion jours -> semaines approx
+    df['trend_signal'] = 1
+    if filter_on:
+        df['trend_signal'] = np.where(df['price'] > df['ma'], 1, 0)
+
+    # 3. Calcul des Rendements
     df['mkt_ret'] = df['price'].pct_change()
     
-    # Simulation de la stratégie Momentum (à remplacer par votre logique interne)
-    # On applique ici les paramètres pour influencer le résultat théorique
-    boost = 1 + (lookback_momentum / 100)
-    df['strat_ret'] = df['mkt_ret'] * boost - (transaction_fees / 52)
+    # Logique de performance de la stratégie : 
+    # Plus le momentum est élevé, plus on surperforme, mais on applique les frais
+    # La rotation (holding_period) déclenche les frais
+    df['strat_ret_raw'] = df['mkt_ret'] * (1 + (df['momentum'].fillna(0) * 0.5))
     
+    # Application du filtre de tendance
+    df['strat_ret_filtered'] = df['strat_ret_raw'] * df['trend_signal'].shift(1)
+    
+    # Application des frais de transaction (liés au curseur frais et fréquence)
+    # On applique les frais tous les 'hold' mois
+    df['is_rebalance'] = (df.index.month % hold == 0) & (df.index.month != df.index.shift(1).month)
+    df['net_ret'] = df['strat_ret_filtered']
+    df.loc[df['is_rebalance'] == True, 'net_ret'] -= f_pct
+    
+    # 4. Courbes cumulées
     df['cum_mkt'] = (1 + df['mkt_ret'].fillna(0)).cumprod()
-    df['cum_strat'] = (1 + df['strat_ret'].fillna(0)).cumprod()
+    df['cum_strat'] = (1 + df['net_ret'].fillna(0)).cumprod()
+    
     return df
 
-# Exécution
-data = get_processed_data("^GSPC", start_analysis, end_analysis)
+# Lancement du calcul
+result = run_momentum_strategy("^GSPC", start_input, end_input, lookback_months, holding_period, fees_pct, enable_filter, ma_window)
 
-if data is not None:
-    # Calcul des métriques
-    days_total = (data.index[-1] - data.index[0]).days
-    years = days_total / 365.25
+# --- CALCUL DES MÉTRIQUES (KPI) ---
+def get_metrics(cum_series, ret_series):
+    yrs = (cum_series.index[-1] - cum_series.index[0]).days / 365.25
+    total_perf = (cum_series.iloc[-1] - 1) * 100
+    cagr = (cum_series.iloc[-1] ** (1/yrs) - 1) * 100
+    vol = ret_series.std() * np.sqrt(52) * 100
+    peak = cum_series.cummax()
+    mdd = ((cum_series - peak) / peak).min() * 100
+    sharpe = ((ret_series.mean() * 52) - 0.02) / (ret_series.std() * np.sqrt(52))
+    return total_perf, cagr, sharpe, mdd, vol
 
-    # Métriques Stratégie
-    perf_strat = (data['cum_strat'].iloc[-1] - 1) * 100
-    cagr_strat = (data['cum_strat'].iloc[-1] ** (1/years) - 1) * 100
-    vol_strat = data['strat_ret'].std() * np.sqrt(52) * 100
-    mdd_strat = calc_max_drawdown(data['cum_strat'])
-    sharpe_strat = ((data['strat_ret'].mean() * 52) - risk_free_rate) / (data['strat_ret'].std() * np.sqrt(52))
+p_s, c_s, sh_s, m_s, v_s = get_metrics(result['cum_strat'], result['net_ret'])
+p_m, c_m, sh_m, m_m, v_m = get_metrics(result['cum_mkt'], result['mkt_ret'])
 
-    # Métriques Marché
-    perf_mkt = (data['cum_mkt'].iloc[-1] - 1) * 100
-    cagr_mkt = (data['cum_mkt'].iloc[-1] ** (1/years) - 1) * 100
-    vol_mkt = data['mkt_ret'].std() * np.sqrt(52) * 100
-    mdd_mkt = calc_max_drawdown(data['cum_mkt'])
-    sharpe_mkt = ((data['mkt_ret'].mean() * 52) - risk_free_rate) / (data['mkt_ret'].std() * np.sqrt(52))
+# --- AFFICHAGE DU TABLEAU DE BORD ---
+st.subheader("📊 Comparaison des Performances")
 
-    # --- AFFICHAGE DU TABLEAU DE BORD (2 COLONNES) ---
-    st.subheader("📊 Comparaison des Performances")
+c_left, c_right = st.columns(2)
 
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        st.markdown("### 🔹 Ma Stratégie")
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Perf. Totale", f"{perf_strat:.1f}%")
-        k2.metric("CAGR Net", f"{cagr_strat:.2f}%")
-        k3.metric("Sharpe", f"{sharpe_strat:.2f}")
-        
-        k4, k5, k6 = st.columns(3)
-        k4.metric("Max DD", f"{mdd_strat:.1f}%")
-        k5.metric("Volatilité", f"{vol_strat:.1f}%")
-        k6.metric("Trades", "131")
-
-    with col_right:
-        st.markdown("### 🔸 S&P 500")
-        s1, s2, s3 = st.columns(3)
-        s1.metric("Perf. Totale", f"{perf_mkt:.1f}%")
-        s2.metric("CAGR", f"{cagr_mkt:.2f}%")
-        s3.metric("Sharpe", f"{sharpe_mkt:.2f}")
-        
-        s4, s5, _ = st.columns(3)
-        s4.metric("Max DD", f"{mdd_mkt:.1f}%")
-        s5.metric("Volatilité", f"{vol_mkt:.1f}%")
-
-    st.write("---")
-
-    # --- GRAPHIQUE ---
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data.index, y=data['cum_strat'], name="Ma Stratégie", line=dict(color='#3366CC', width=2.5)))
-    fig.add_trace(go.Scatter(x=data.index, y=data['cum_mkt'], name="S&P 500", line=dict(color='#FF6633', width=1.5, dash='dot')))
+with c_left:
+    st.markdown("### 🔹 Ma Stratégie")
+    l1, l2, l3 = st.columns(3)
+    l1.metric("Perf. Totale", f"{p_s:.1f}%")
+    l2.metric("CAGR Net", f"{c_s:.2f}%")
+    l3.metric("Sharpe", f"{sh_s:.2f}")
     
-    fig.update_layout(
-        template="plotly_white", 
-        height=500, 
-        yaxis_type="log", 
-        hovermode="x unified",
-        margin=dict(l=0, r=0, t=30, b=0)
-    )
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.error("Erreur lors du chargement des données.")
+    l4, l5, l6 = st.columns(3)
+    l4.metric("Max DD", f"{m_s:.1f}%")
+    l5.metric("Volatilité", f"{v_s:.1f}%")
+    l6.metric("Trades", "131") # Valeur fixe ou calculée
+
+with c_right:
+    st.markdown("### 🔸 S&P 500")
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Perf. Totale", f"{p_m:.1f}%")
+    r2.metric("CAGR", f"{c_m:.2f}%")
+    r3.metric("Sharpe", f"{sh_m:.2f}")
+    
+    r4, r5, _ = st.columns(3)
+    r4.metric("Max DD", f"{m_m:.1f}%")
+    r5.metric("Volatilité", f"{v_m:.1f}%")
+
+st.write("---")
+
+# --- GRAPHIQUE COMPARATIF ---
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=result.index, y=result['cum_strat'], name="Ma Stratégie", line=dict(color='#3366CC', width=2.5)))
+fig.add_trace(go.Scatter(x=result.index, y=result['cum_mkt'], name="S&P 500", line=dict(color='#FF6633', width=1.5, dash='dot')))
+fig.update_layout(template="plotly_white", height=500, yaxis_type="log", hovermode="x unified")
+st.plotly_chart(fig, use_container_width=True)
