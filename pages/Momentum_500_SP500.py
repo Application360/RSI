@@ -11,6 +11,7 @@ st.set_page_config(page_title="Momentum Strategy S&P 500", layout="wide")
 # --- CHARGEMENT DES DONNÉES ---
 @st.cache_data
 def load_data():
+    # Liste des chemins potentiels pour le fichier
     possible_paths = [
         'sp500_data_final.csv', 
         os.path.join(os.path.dirname(__file__), 'sp500_data_final.csv'),
@@ -33,6 +34,7 @@ def load_data():
     else:
         df.index = pd.to_datetime(df.index)
     
+    # Nettoyage des données vides
     df = df.dropna(axis=1, how='all')
     return df
 
@@ -50,9 +52,11 @@ if df_raw is None:
 # --- BARRE LATÉRALE (CONTRÔLES) ---
 st.sidebar.header("🕹️ Paramètres de Simulation")
 
+# (4) Dates de 1970 à 2026
 min_sim_date = datetime(1970, 1, 1)
 max_sim_date = datetime(2026, 12, 31)
 
+# On cale les valeurs par défaut sur les données disponibles pour éviter les crashs
 data_min = df_raw.index.min().to_pydatetime()
 data_max = df_raw.index.max().to_pydatetime()
 
@@ -60,12 +64,16 @@ start_date = st.sidebar.date_input("Début", data_min, min_value=min_sim_date, m
 end_date = st.sidebar.date_input("Fin", data_max, min_value=min_sim_date, max_value=max_sim_date)
 
 st.sidebar.markdown("---")
+
+# Paramètres Momentum
 lookback = st.sidebar.slider("Look-back (mois)", 1, 12, 6)
+# (4) Holding curseur entre 1 et 12 mois
 holding = st.sidebar.slider("Holding (mois)", 1, 12, 1)
 n_tickers = st.sidebar.slider("Nombre de tickers (N)", 1, 20, 10)
 
 # --- LOGIQUE FINANCIÈRE ---
 def run_backtest(data, start, end, lb, hold, n):
+    # Filtrage date
     data = data.loc[str(start):str(end)].copy()
     
     if '^GSPC' in data.columns:
@@ -75,12 +83,14 @@ def run_backtest(data, start, end, lb, hold, n):
         benchmark_prices = data.mean(axis=1)
         asset_prices = data
 
+    # Resample mensuel
     monthly_assets = asset_prices.resample('ME').last()
     monthly_bench = benchmark_prices.resample('ME').last()
     
     returns_assets = monthly_assets.pct_change()
     returns_bench = monthly_bench.pct_change()
     
+    # Signal Momentum (Performance sur période lb)
     momentum_signal = monthly_assets.pct_change(lb)
     
     strat_returns = []
@@ -119,41 +129,34 @@ if st.button("Lancer le Backtest"):
         m_s = get_metrics(res_strat, ret_strat)
         m_b = get_metrics(res_bench, ret_bench)
         
-        # --- NOUVEL AFFICHAGE TABLEAU STYLISÉ ---
-        st.subheader("📊 Rapport de Performance Comparatif")
+        st.subheader("📊 Comparaison des Performances")
+        col1, col2, col3, col4 = st.columns(4)
+        metrics_names = ["Total Return", "CAGR", "Sharpe", "Max Drawdown"]
         
-        # Création d'un DataFrame pour le tableau
-        comparison_df = pd.DataFrame({
-            "Métrique": ["Performance Totale", "CAGR (Rendement Annuel)", "Ratio de Sharpe", "Max Drawdown"],
-            "Stratégie Momentum": [f"{m_s[0]:,.2f}%", f"{m_s[1]:.2f}%", f"{m_s[2]:.2f}", f"{m_s[3]:.2f}%"],
-            "Benchmark S&P 500": [f"{m_b[0]:,.2f}%", f"{m_b[1]:.2f}%", f"{m_b[2]:.2f}", f"{m_b[3]:.2f}%"]
-        })
+        for i, name in enumerate(metrics_names):
+            col1.metric(f"{name} (Strat)", f"{m_s[i]:.2f}{'%' if i != 2 else ''}")
+            col2.metric(f"{name} (S&P500)", f"{m_b[i]:.2f}{'%' if i != 2 else ''}")
 
-        # Utilisation de Markdown pour un style plus "Dashboard"
-        st.table(comparison_df)
-
-        # Ajout d'une ligne d'Alpha (Surperformance)
-        alpha = m_s[1] - m_b[1]
-        color = "green" if alpha > 0 else "red"
-        st.markdown(f"**Surperformance annuelle (Alpha) :** :{color}[{alpha:.2f}%]")
-
-        # --- GRAPHIQUES ---
+        # --- (1) (2) GRAPHIQUE PRINCIPAL ---
         fig = go.Figure()
+        # Stratégie en BLEU
         fig.add_trace(go.Scatter(x=res_strat.index, y=res_strat, name="Momentum Portfolio", 
                                  line=dict(color='#1f77b4', width=3))) 
+        # S&P 500 en VERT
         fig.add_trace(go.Scatter(x=res_bench.index, y=res_bench, name="S&P 500 Benchmark", 
                                  line=dict(color='#2ca02c', width=2, dash='dot'))) 
         
         fig.update_layout(
-            title="Performance Cumulative (Échelle Logarithmique)",
+            title="Performance Cumulative (Base 1.0)",
             template="plotly_dark",
             hovermode="x unified",
-            yaxis_type="log",
+            yaxis_type="log", # (1) Échelle logarithmique
             xaxis_title="Date",
             yaxis_title="Valeur (Log Scale)"
         )
         st.plotly_chart(fig, use_container_width=True)
 
+        # Graphique Drawdown
         peak = res_strat.cummax()
         drawdown = (res_strat - peak) / peak * 100
         fig_dd = go.Figure()
