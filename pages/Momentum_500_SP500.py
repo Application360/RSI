@@ -4,13 +4,13 @@ import requests
 from datetime import datetime
 
 # --- 1. CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="Momentum 500 - Étape 2", layout="wide")
+st.set_page_config(page_title="Momentum 500 - Étape 2 (Modifiée)", layout="wide")
 
 # --- 2. BARRE LATÉRALE : PARAMÈTRES ---
 st.sidebar.header("⚙️ Paramètres de la Stratégie")
 
-# Paramètres de sélection
-num_assets = st.sidebar.slider("Nombre d'actions à détenir", 5, 50, 20)
+# MODIFICATION : Curseur limité de 1 à 20
+num_assets = st.sidebar.slider("Nombre d'actions à détenir", 1, 20, 10)
 lookback_months = st.sidebar.slider("Période d'analyse Momentum (mois)", 1, 12, 6)
 rotation_freq = st.sidebar.slider("Fréquence de rotation (mois)", 1, 12, 3)
 fees_pct = st.sidebar.slider("Frais par transaction (%)", 0.0, 0.5, 0.10, step=0.01) / 100
@@ -22,20 +22,20 @@ ma_window = st.sidebar.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 150)
 
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Période d'Analyse")
-# On utilise des zones de texte pour les dates pour plus de flexibilité
-start_input = st.sidebar.text_input("Date de début (AAAA/MM/JJ)", "2015/01/01")
+# MODIFICATION : Date de début fixée au 01/01/1980 par défaut
+start_input = st.sidebar.text_input("Date de début (AAAA/MM/JJ)", "1980/01/01")
 end_input = st.sidebar.text_input("Date de fin (AAAA/MM/JJ)", datetime.now().strftime("%Y/%m/%d"))
 
 # --- 3. TITRE PRINCIPAL ---
 st.title("🚀 Momentum 500 : Construction Progressive")
-st.write("Étape 2 : Mise en place des contrôles et paramètres")
+st.write("Étape 2 : Ajustement des curseurs et de la période historique")
 
-# --- 4. RÉCAPITULATIF DES PARAMÈTRES CHOISIS ---
+# --- 4. RÉCAPITULATIF DES PARAMÈTRES ---
 st.subheader("Paramètres actuels")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.write(f"**Actions sélectionnées :** {num_assets}")
+    st.write(f"**Actions sélectionnées :** {num_assets} (Max 20)")
     st.write(f"**Look-back :** {lookback_months} mois")
 
 with col2:
@@ -44,9 +44,9 @@ with col2:
 
 with col3:
     st.write(f"**Filtre de tendance :** {'Activé' if enable_filter else 'Désactivé'}")
-    st.write(f"**Moyenne Mobile :** {ma_window} jours")
+    st.write(f"**Début d'analyse :** {start_input}")
 
-# --- 5. FONCTION DE RÉCUPÉRATION (Gardée de l'étape 1) ---
+# --- 5. FONCTION DE RÉCUPÉRATION DES TICKERS ---
 @st.cache_data
 def get_sp500_tickers():
     try:
@@ -62,4 +62,4 @@ def get_sp500_tickers():
 df_sp500 = get_sp500_tickers()
 
 if df_sp500 is not None:
-    st.success(f"✅ {len(df_sp500)} actions sont prêtes à être analysées du {start_input} au {end_input}.")
+    st.success(f"✅ Prêt pour l'analyse historique depuis 1980 sur {len(df_sp500)} actions.")
