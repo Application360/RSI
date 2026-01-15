@@ -39,12 +39,20 @@ threshold_panic = st.sidebar.number_input("Seuil Achat (Panique)", value=32)
 # --- FONCTIONS DE CALCUL ---
 @st.cache_data
 def get_data_and_calc(ticker, start, end, fees, th_buy, th_panic, period):
-    df = yf.download(ticker, start=start, end=end, interval="1wk")
-    if df.empty: return None
+    # Téléchargement avec group_by pour stabiliser le format
+    df = yf.download(ticker, start=start, end=end, interval="1wk", group_by='column')
     
+    if df.empty: 
+        return None
+    
+    # Nettoyage des colonnes (Gestion du bug MultiIndex de Yahoo Finance)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     
+    # Vérification de sécurité
+    if 'Close' not in df.columns:
+        return None
+
     df = df[['Close']].copy()
     df.columns = ['price']
     
