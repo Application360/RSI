@@ -2,123 +2,164 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import os
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Momentum Optimizer S&P 500", layout="wide")
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="Stratégie Momentum S&P 500", layout="wide")
 
+st.title("🚀 Stratégie Momentum : Top 500 S&P")
+st.markdown("""
+Cette application simule une stratégie de **Momentum** : on achète les actions ayant eu la meilleure performance sur une période passée (*Look-back*) et on les conserve pendant une période définie (*Holding*).
+""")
+
+# --- FONCTION DE CHARGEMENT ROBUSTE ---
 @st.cache_data
-def load_data():
-    df = pd.read_csv('sp500_data_final.csv', index_col=0, parse_dates=True)
-    df.index = pd.to_datetime(df.index)
-    # On identifie le benchmark (S&P 500)
-    if '^GSPC' not in df.columns:
-        df['^GSPC'] = df.mean(axis=1) # Proxy si manquant
+def load_data(file_path):
+    # Chargement avec gestion de l'index Date
+    df = pd.read_csv(file_path)
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+    else:
+        df.index = pd.to_datetime(df.index)
+    
+    # Nettoyage : suppression des colonnes totalement vides
+    df = df.dropna(axis=1, how='all')
     return df
 
-data = load_data()
+# Tentative de localisation du fichier
+filename = 'sp500_data_final.csv'
+paths_to_check = [filename, os.path.join('..', filename), os.path.join('pages', filename)]
+data_file = next((p for p in paths_to_check if os.path.exists(p)), None)
 
-# --- SIDEBAR ---
-st.sidebar.header("🕹️ Contrôles de Simulation")
+if data_file is not None:
+    data = load_data(data_file)
+else:
+    st.error(f"⚠️ Fichier '{filename}' non trouvé dans le répertoire.")
+    uploaded_file = st.file_uploader("Veuillez uploader le fichier CSV manuellement ici :", type=["csv"])
+    if uploaded_file:
+        data = load_data(uploaded_file)
+    else:
+        st.stop()
+
+# --- SIDEBAR - PARAMÈTRES ---
+st.sidebar.header("⚙️ Paramètres du Backtest")
 
 # Filtre de dates
-min_date = data.index.min().date()
-max_date = data.index.max().date()
-start_date = st.sidebar.date_input("Début", min_date)
-end_date = st.sidebar.date_input("Fin", max_date)
+min_date = data.index.min().to_pydatetime()
+max_date = data.index.max().to_pydatetime()
+start_date = st.sidebar.date_input("Date de début", min_date, min_value=min_date, max_value=max_date)
+end_date = st.sidebar.date_input("Date de fin", max_date, min_value=min_date, max_value=max_date)
 
-# Paramètres Momentum
-lookback = st.sidebar.slider("Look-back (mois)", 1, 12, 6, help="Période de mesure de la performance passée")
-holding = st.sidebar.slider("Holding (mois)", 1, 6, 1, help="Fréquence de rebalancement")
+st.sidebar.separator()
 
-# NOUVEAU : Sélection du nombre de tickers (1 à 20)
-n_tickers = st.sidebar.slider("Nombre de tickers retenus (N)", 1, 20, 10, 
-                             help="Plus le nombre est bas, plus le portefeuille est concentré sur les 'Top Performers'")
+# Paramètres de stratégie
+lookback_months = st.sidebar.slider("Période de Look-back (mois)", 1, 12, 6)
+holding_months = st.sidebar.slider("Période de Holding (mois)", 1, 12, 1)
+n_tickers = st.sidebar.slider("Nombre de tickers retenus", 1, 20, 10)
+
+# --- CALCUL DU BENCHMARK ---
+# Si le ticker ^GSPC n'est pas dans les données, on crée un index équi-pondéré des actions disponibles
+if '^GSPC' in data.columns:
+    benchmark_raw = data['^GSPC']
+else:
+    benchmark_raw = data.mean(axis=1) # Proxy S&P 500 (Equal Weight)
 
 # --- MOTEUR DE BACKTEST ---
-def run_momentum_strategy(df, start, end, lb, hold, n):
-    # Filtrage temporel
-    mask = (df.index.date >= start) & (df.index.date <= end)
-    subset = df.loc[mask].copy()
+def run_backtest(df, bench, start, end, lb, hold, n):
+    # Tronquer les données
+    df = df.loc[start:end].copy()
+    bench = bench.loc[start:end].copy()
     
-    # Passage en mensuel
-    monthly = subset.resample('ME').last()
-    returns = monthly.pct_change()
+    # Conversion en rendement mensuel pour simplifier le calcul momentum
+    monthly_df = df.resample('ME').last()
+    monthly_bench = bench.resample('ME').last()
     
-    # Calcul du Momentum (Rendement cumulé)
-    momentum_scores = monthly.pct_change(lb)
+    monthly_returns = monthly_df.pct_change()
+    bench_returns = monthly_bench.pct_change()
     
-    results = []
+    # Momentum : Performance cumulée sur les 'lb' derniers mois
+    momentum_signal = monthly_df.pct_change(lb)
+    
+    portfolio_returns = []
     dates = []
-    tickers_history = {} # Pour voir quels titres ont été choisis
-
-    # On commence après la période de lookback
-    for i in range(lb, len(monthly) - hold, hold):
-        current_date = monthly.index[i]
-        
-        # Sélection des N meilleurs (hors benchmark)
-        eligible_assets = momentum_scores.columns.drop('^GSPC')
-        top_n = momentum_scores.loc[current_date, eligible_assets].nlargest(n).index
-        
-        # Calcul de la performance sur la période de détention
-        next_returns = returns.loc[monthly.index[i+1 : i+1+hold], top_n].mean(axis=1)
-        
-        results.extend(next_returns.values)
-        dates.extend(next_returns.index)
-        tickers_history[current_date] = list(top_n)
-
-    # Séries temporelles
-    strat_series = pd.Series(results, index=dates)
-    bench_series = returns.loc[dates, '^GSPC']
     
-    cum_strat = (1 + strat_series).cumprod()
-    cum_bench = (1 + bench_series).cumprod()
-    
-    return cum_strat, cum_bench, strat_series, bench_series, tickers_history
+    # Boucle de rebalancement
+    for i in range(lb, len(monthly_df) - hold, hold):
+        # 1. Date actuelle de décision
+        current_date = monthly_df.index[i]
+        
+        # 2. Sélection des N meilleurs tickers (on ignore les colonnes avec trop de NaNs à cette date)
+        top_performers = momentum_signal.loc[current_date].nlargest(n).index
+        
+        # 3. Calcul de la performance sur la période de holding
+        # Rendement moyen équi-pondéré des sélectionnés
+        future_returns = monthly_returns.iloc[i + 1 : i + 1 + hold][top_performers].mean(axis=1)
+        
+        portfolio_returns.extend(future_returns.values)
+        dates.extend(future_returns.index)
 
-# --- EXECUTION ET AFFICHAGE ---
-if st.button("Calculer la Performance"):
-    c_strat, c_bench, r_strat, r_bench, history = run_momentum_strategy(
-        data, start_date, end_date, lookback, holding, n_tickers
+    # Séries finales
+    strat_results = pd.Series(portfolio_returns, index=dates).dropna()
+    bench_results = bench_returns.loc[strat_results.index]
+    
+    return (1 + strat_results).cumprod(), (1 + bench_results).cumprod(), strat_results, bench_results
+
+# --- CALCUL DES MÉTRIQUES ---
+def get_metrics(cum_series, returns):
+    if len(cum_series) == 0: return [0]*4
+    total_perf = (cum_series.iloc[-1] - 1) * 100
+    
+    # CAGR
+    years = (cum_series.index[-1] - cum_series.index[0]).days / 365.25
+    cagr = ((cum_series.iloc[-1])**(1/years) - 1) * 100 if years > 0 else 0
+    
+    # Sharpe (RF = 0 pour simplification)
+    vol = returns.std() * np.sqrt(12)
+    sharpe = (cagr / 100) / vol if vol > 0 else 0
+    
+    # Max Drawdown
+    peak = cum_series.cummax()
+    dd = (cum_series - peak) / peak
+    max_dd = dd.min() * 100
+    
+    return total_perf, cagr, sharpe, max_dd
+
+# --- EXÉCUTION ET AFFICHAGE ---
+if st.button("🚀 Lancer l'Analyse"):
+    c_strat, c_bench, r_strat, r_bench = run_backtest(
+        data, benchmark_raw, start_date, end_date, lookback_months, holding_months, n_tickers
     )
-
-    # Calcul Métriques
-    def calc_metrics(cum, ret):
-        tr = (cum.iloc[-1] - 1) * 100
-        ann = ((cum.iloc[-1])**(12/len(cum)) - 1) * 100 # Approx annuelle
-        vol = ret.std() * np.sqrt(12)
-        sharpe = (ann/100) / vol if vol != 0 else 0
-        dd = ((cum - cum.cummax()) / cum.cummax()).min() * 100
-        return tr, ann, sharpe, dd
-
-    m_s = calc_metrics(c_strat, r_strat)
-    m_b = calc_metrics(c_bench, r_bench)
-
-    # Affichage
-    st.subheader(f"Résultats pour Top {n_tickers} Actions")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("**Stratégie Momentum**")
-        st.dataframe(pd.DataFrame({
-            "Métrique": ["Total Return", "CAGR", "Sharpe", "Max Drawdown"],
-            "Valeur": [f"{m_s[0]:.2f}%", f"{m_s[1]:.2f}%", f"{m_s[2]:.2f}", f"{m_s[3]:.2f}%"]
-        }))
-    with col2:
-        st.write("**Benchmark (S&P 500)**")
-        st.dataframe(pd.DataFrame({
-            "Métrique": ["Total Return", "CAGR", "Sharpe", "Max Drawdown"],
-            "Valeur": [f"{m_b[0]:.2f}%", f"{m_b[1]:.2f}%", f"{m_b[2]:.2f}", f"{m_b[3]:.2f}%"]
-        }))
+    if len(c_strat) > 0:
+        m_s = get_metrics(c_strat, r_strat)
+        m_b = get_metrics(c_bench, r_bench)
+        
+        # Métriques en colonnes
+        st.subheader("📊 Performance Comparée")
+        cols = st.columns(4)
+        labels = ["Performance Totale", "CAGR (Annuel)", "Ratio de Sharpe", "Max Drawdown"]
+        
+        for i in range(4):
+            with cols[i]:
+                st.metric(labels[i], f"{m_s[i]:.2f}{'%' if i != 2 else ''}")
+                st.caption(f"S&P 500: {m_b[i]:.2f}{'%' if i != 2 else ''}")
 
-    # Graphes
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=c_strat.index, y=c_strat, name=f"Momentum (Top {n_tickers})", line=dict(color='#00ffcc')))
-    fig.add_trace(go.Scatter(x=c_bench.index, y=c_bench, name="S&P 500", line=dict(color='#ff4b4b')))
-    fig.update_layout(title="Comparaison Performance Cumulative", template="plotly_dark", hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
+        # Graphique de Performance
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=c_strat.index, y=c_strat, name=f"Stratégie (Top {n_tickers})", line=dict(color='#00FFCC', width=3)))
+        fig.add_trace(go.Scatter(x=c_bench.index, y=c_bench, name="S&P 500 (Reference)", line=dict(color='white', dash='dash')))
+        fig.update_layout(title="Croissance du Capital (Base 1.0)", template="plotly_dark", hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Affichage des derniers tickers sélectionnés
-    with st.expander("Voir la dernière sélection de titres"):
-        last_date = list(history.keys())[-1]
-        st.write(f"Titres sélectionnés au {last_date.date()} :")
-        st.write(", ".join(history[last_date]))
+        # Graphique de Drawdown
+        peak = c_strat.cummax()
+        dd_strat = (c_strat - peak) / peak * 100
+        
+        fig_dd = go.Figure()
+        fig_dd.add_trace(go.Scatter(x=dd_strat.index, y=dd_strat, fill='tozeroy', name="Drawdown", line=dict(color='red')))
+        fig_dd.update_layout(title="Risque : Drawdown Historique (%)", template="plotly_dark")
+        st.plotly_chart(fig_dd, use_container_width=True)
+        
+    else:
+        st.warning("La période choisie est trop courte pour les paramètres sélectionnés.")
