@@ -106,7 +106,7 @@ def get_metrics(cum_series, ret_series):
     vol = ret_series.std() * np.sqrt(12) * 100 # Mensuel -> Annuel
     peak = cum_series.cummax()
     mdd = ((cum_series - peak) / peak).min() * 100
-    sharpe = ((ret_series.mean() * 12) - 0.02) / (ret_series.std() * np.sqrt(12))
+    sharpe = ((ret_series.mean() * 12)) / (ret_series.std() * np.sqrt(12))
     return total_perf, cagr, sharpe, mdd, vol
 
 if df_res is not None:
