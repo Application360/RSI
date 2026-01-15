@@ -6,7 +6,7 @@ from datetime import datetime
 import time
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="Momentum 500 - Étape 3 (Ultra-Robuste)", layout="wide")
+st.set_page_config(page_title="Momentum 500 - Étape 3 (Finale)", layout="wide")
 
 # --- 2. SIDEBAR ---
 st.sidebar.header("⚙️ Paramètres")
@@ -16,8 +16,9 @@ rotation_freq = st.sidebar.slider("Fréquence de rotation (mois)", 1, 12, 3)
 fees_pct = st.sidebar.slider("Frais par transaction (%)", 0.0, 0.5, 0.10, step=0.01) / 100
 
 st.sidebar.markdown("---")
-start_input = st.sidebar.text_input("Date de début", "1980/01/01")
-end_input = st.sidebar.text_input("Date de fin", datetime.now().strftime("%Y/%m/%d"))
+# Utilisation d'un sélecteur de date pour éviter les erreurs de frappe
+start_date = st.sidebar.date_input("Date de début", datetime(1980, 1, 1))
+end_date = st.sidebar.date_input("Date de fin", datetime.now())
 
 # --- 3. FONCTIONS DE RÉCUPÉRATION ---
 
@@ -29,67 +30,76 @@ def get_sp500_tickers():
     df = pd.read_html(response.text)[0]
     return df['Symbol'].str.replace('.', '-', regex=True).tolist()
 
-def fetch_data_robust(tickers, start, end, column="Close"):
-    """Télécharge une colonne spécifique par petits paquets de 20"""
+def fetch_safe(tickers, start, end, column="Close"):
+    """Téléchargement ultra-sécurisé par paquets de 10"""
     all_data = []
-    chunk_size = 20 # Paquets plus petits pour éviter le rejet
+    chunk_size = 10 
     ticker_chunks = [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
     
-    progress_bar = st.progress(0.0)
-    status_text = st.empty()
+    pbar = st.progress(0.0)
+    msg = st.empty()
     
     for i, chunk in enumerate(ticker_chunks):
-        status_text.text(f"Téléchargement {column} : Groupe {i+1}/{len(ticker_chunks)}...")
+        msg.text(f"📥 {column} : Paquet {i+1}/{len(ticker_chunks)}")
         try:
-            # On ne demande qu'une seule colonne à la fois pour alléger la requête
-            data = yf.download(chunk, start=start, end=end, interval="1mo", progress=False)[column]
+            # Téléchargement avec timeout court
+            data = yf.download(chunk, start=start, end=end, interval="1mo", progress=False, group_by='column')[column]
             if not data.empty:
+                # Si une seule action est retournée, c'est une Series, on la convertit en DataFrame
+                if isinstance(data, pd.Series):
+                    data = data.to_frame()
                 all_data.append(data)
-            time.sleep(0.2) # Pause très courte
-        except Exception as e:
-            st.error(f"Erreur groupe {i+1}: {e}")
+            
+            # Pause de sécurité pour éviter le blocage IP
+            time.sleep(0.3)
+        except Exception:
+            continue # On ignore les erreurs individuelles de paquets
         
-        progress_bar.progress((i + 1) / len(ticker_chunks))
+        pbar.progress((i + 1) / len(ticker_chunks))
     
     if not all_data:
         return pd.DataFrame()
-    return pd.concat(all_data, axis=1)
+    
+    # Fusion en éliminant les doublons potentiels
+    return pd.concat(all_data, axis=1).sort_index()
 
 # --- 4. EXÉCUTION ---
-st.title("🚀 Momentum 500 : Étape 3 (Méthode Ultra-Robuste)")
-st.info("Le téléchargement est divisé en deux phases (Clôtures puis Ouvertures) pour garantir le succès.")
+st.title("🚀 Momentum 500 : Étape 3 (Mode Survie)")
+st.warning("⚠️ Attention : Remonter à 1980 avec 500 actions est très lourd. Si cela échoue encore, essayez de mettre 2000/01/01 comme date de début.")
 
 tickers = get_sp500_tickers()
 
-if st.button("Lancer le téléchargement haute fiabilité"):
-    s_date = start_input.replace('/', '-')
-    e_date = end_input.replace('/', '-')
+if st.button("Lancer le chargement haute sécurité"):
+    # Nettoyage des dates pour Yahoo
+    s_str = start_date.strftime('%Y-%m-%d')
+    e_str = end_date.strftime('%Y-%m-%d')
     
-    # 1. Téléchargement de l'indice
-    with st.spinner("Téléchargement du S&P 500..."):
-        mkt = yf.download("^GSPC", start=s_date, end=e_date, interval="1mo", progress=False)
+    # 1. Indice
+    with st.spinner("Indice..."):
+        mkt = yf.download("^GSPC", start=s_str, end=e_str, interval="1mo", progress=False)
     
-    # 2. Téléchargement des Clôtures
-    closes = fetch_data_robust(tickers, s_date, e_date, "Close")
+    # 2. Clôtures
+    closes = fetch_safe(tickers, s_str, e_str, "Close")
     
-    # 3. Téléchargement des Ouvertures
-    opens = fetch_data_robust(tickers, s_date, e_date, "Open")
+    # 3. Ouvertures
+    opens = fetch_safe(tickers, s_str, e_str, "Open")
     
     if not closes.empty and not opens.empty:
-        st.success(f"✅ Succès ! {len(closes.columns)} actions chargées de {s_date} à {e_date}.")
+        # On ne garde que les tickers présents dans les deux fichiers
+        common_cols = closes.columns.intersection(opens.columns)
+        closes = closes[common_cols]
+        opens = opens[common_cols]
         
-        tab1, tab2 = st.tabs(["📊 Clôtures (Momentum)", "📈 Ouvertures (Exécution)"])
-        with tab1:
-            st.dataframe(closes.tail(), use_container_width=True)
-        with tab2:
-            st.dataframe(opens.tail(), use_container_width=True)
-            
-        # Sauvegarde
+        st.success(f"✅ Analyse possible sur {len(common_cols)} actions.")
+        
         st.session_state['closes'] = closes
         st.session_state['opens'] = opens
         st.session_state['mkt'] = mkt
+        
+        st.write("**Dernières lignes des Clôtures :**")
+        st.dataframe(closes.tail(3))
     else:
-        st.error("Le serveur Yahoo a encore rejeté une partie des données. Réessayez ou réduisez la période.")
+        st.error("Échec partiel ou total. Veuillez réduire la période (ex: 1990 ou 2000).")
 
 elif 'closes' in st.session_state:
-    st.success("Données en mémoire. Prêt pour l'Étape 4.")
+    st.success("Données prêtes en mémoire.")
