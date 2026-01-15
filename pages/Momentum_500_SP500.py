@@ -45,7 +45,7 @@ def run_full_momentum_engine(start, end, lb, hold, f_pct, filter_on, ma_val, n_t
     raw_data = yf.download(tickers + ["^GSPC"], start=s_date, end=e_date, interval="1mo")['Close']
     
     if raw_data.empty:
-        return None
+        return None, 0
 
     mkt_price = raw_data["^GSPC"].rename("mkt_price")
     assets_prices = raw_data[tickers]
@@ -62,16 +62,21 @@ def run_full_momentum_engine(start, end, lb, hold, f_pct, filter_on, ma_val, n_t
     trend_signal = (mkt_price > mkt_ma).shift(1) if filter_on else pd.Series(True, index=mkt_price.index)
     
     current_portfolio = []
+    trade_count = 0
     
     for i in range(len(monthly_returns)):
         if i % hold == 0:
+            new_portfolio = []
             if trend_signal.iloc[i]:
-                top_assets = momentum_scores.iloc[i].nlargest(n_top).index.tolist()
-                if top_assets != current_portfolio:
-                    strat_returns.iloc[i] -= f_pct
-                current_portfolio = top_assets
-            else:
-                current_portfolio = []
+                new_portfolio = momentum_scores.iloc[i].nlargest(n_top).index.tolist()
+            
+            # Si la composition change, on compte les trades (achat des nouveaux actifs)
+            # On considère qu'un changement de liste d'actifs = 1 opération de rebalancement (trade)
+            if set(new_portfolio) != set(current_portfolio):
+                if len(new_portfolio) > 0 or len(current_portfolio) > 0:
+                    trade_count += 1
+                strat_returns.iloc[i] -= f_pct
+                current_portfolio = new_portfolio
         
         if current_portfolio:
             strat_returns.iloc[i] += monthly_returns[current_portfolio].iloc[i].mean()
@@ -82,11 +87,11 @@ def run_full_momentum_engine(start, end, lb, hold, f_pct, filter_on, ma_val, n_t
     results['cum_mkt'] = (1 + results['mkt_ret']).cumprod()
     results['cum_strat'] = (1 + results['strat_ret']).cumprod()
     
-    return results
+    return results, trade_count
 
-df_res = run_full_momentum_engine(start_input, end_input, lookback_months, rotation_freq, fees_pct, enable_filter, ma_window, num_assets)
+df_res, total_trades = run_full_momentum_engine(start_input, end_input, lookback_months, rotation_freq, fees_pct, enable_filter, ma_window, num_assets)
 
-# --- CALCUL DES MÉTRIQUES (RATIO DE SHARPE À 0%) ---
+# --- CALCUL DES MÉTRIQUES ---
 def get_metrics(cum_series, ret_series):
     yrs = (cum_series.index[-1] - cum_series.index[0]).days / 365.25
     total_perf = (cum_series.iloc[-1] - 1) * 100
@@ -95,9 +100,8 @@ def get_metrics(cum_series, ret_series):
     peak = cum_series.cummax()
     mdd = ((cum_series - peak) / peak).min() * 100
     
-    # ACTUALISATION : Taux sans risque fixé à 0.0 (0%)
-    risk_free_rate = 0.0 
-    sharpe = ((ret_series.mean() * 12) - risk_free_rate) / (ret_series.std() * np.sqrt(12)) if ret_series.std() != 0 else 0
+    # Ratio de Sharpe avec RF = 0%
+    sharpe = ((ret_series.mean() * 12) - 0.0) / (ret_series.std() * np.sqrt(12)) if ret_series.std() != 0 else 0
     
     return total_perf, cagr, sharpe, mdd, vol
 
@@ -118,7 +122,8 @@ if df_res is not None:
         l4, l5, l6 = st.columns(3)
         l4.metric("Max DD", f"{m_s:.1f}%")
         l5.metric("Volatilité", f"{v_s:.1f}%")
-        l6.metric("Trades", "Dynamique")
+        # AFFICHAGE DU NOMBRE DE TRADES DYNAMIQUE
+        l6.metric("Trades", f"{total_trades}")
 
     with col_r:
         st.markdown("### 🔸 S&P 500")
