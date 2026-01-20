@@ -13,6 +13,8 @@ def calculate_metrics(returns):
     total_return = (returns + 1).prod() - 1
     days = (returns.index[-1] - returns.index[0]).days
     n_years = max(days / 365.25, 0.1)
+    
+    # Utilisation de la performance simple pour plus de clarté sur les courtes périodes
     cagr = (total_return + 1) ** (1 / n_years) - 1
     vol = returns.std() * np.sqrt(12)
     sharpe = (cagr) / vol if vol > 0 else 0
@@ -21,7 +23,7 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Analyse Complète & Historique Tickers")
+    st.title("🚀 Momentum Pro : Benchmark Officiel ^GSPC")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -45,16 +47,24 @@ def run_momentum_pure():
 
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
+        # On télécharge les secteurs et l'indice ^GSPC
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 60)
-        data = yf.download(sectors + ['SPY'], start=margin_start, end=e_date, progress=False)
+        data = yf.download(sectors + ['^GSPC'], start=margin_start, end=e_date, progress=False)
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
-        closes = data['Adj Close'].ffill() if 'Adj Close' in data.columns else data['Close'].ffill()
+        
+        # Stratégie (Secteurs) : On garde Adj Close car ce sont des produits réels (ETFs)
+        closes_strat = data['Adj Close'][sectors].ffill()
+        # Benchmark (^GSPC) : On prend strictement le Close (Price Return)
+        close_bench = data['Close']['^GSPC'].ffill()
+        
+        closes = pd.concat([closes_strat, close_bench.rename('^GSPC')], axis=1)
         opens = data['Open'].ffill()
-        spy_sma = closes['SPY'].rolling(window=sma_p).mean()
+        
+        spy_sma = closes['^GSPC'].rolling(window=sma_p).mean()
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Calcul des performances historiques...'):
+        with st.spinner('Calcul des performances sur l\'indice officiel...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
@@ -79,7 +89,7 @@ def run_momentum_pure():
                 dt_now = monthly_close.index[i]
                 
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
-                price_spy = close_data['SPY'].iloc[idx_ref]
+                price_spy = close_data['^GSPC'].iloc[idx_ref]
                 val_sma = spy_sma.iloc[idx_ref]
                 market_is_bull = (price_spy > val_sma) if use_market_timing else True
 
@@ -111,11 +121,15 @@ def run_momentum_pure():
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
+                    # Performance Stratégie
                     gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top if is_invested else 0.0
+                    # Performance Benchmark (^GSPC)
+                    bench_ret = (close_data['^GSPC'].iloc[idx_e] / open_data['^GSPC'].iloc[idx_s]) - 1
+                    
                     history.append({
                         'Date': monthly_close.index[i+1], 
                         'Ma Stratégie': gross_ret - monthly_fees, 
-                        'S&P 500': (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
+                        'S&P 500': bench_ret
                     })
                 except: continue
 
@@ -126,7 +140,6 @@ def run_momentum_pure():
         # --- DASHBOARD DE MÉTRIQUES ---
         st.subheader("📊 Métriques de Performance")
         
-        # Section Ma Stratégie
         st.markdown("#### 🔹 Ma Stratégie")
         s1, s2, s3, s4, s5, s6 = st.columns(6)
         s1.metric("Perf. Totale", f"{m_s[4]*100:.1f}%")
@@ -136,15 +149,14 @@ def run_momentum_pure():
         s5.metric("Volatilité", f"{m_s[1]*100:.1f}%")
         s6.metric("Nb Trades", portfolio_changes)
 
-        # Section S&P 500
-        st.markdown("#### 🔸 S&P 500 (Benchmark)")
+        st.markdown("#### 🔸 S&P 500 (Indice ^GSPC)")
         b1, b2, b3, b4, b5, b6 = st.columns(6)
         b1.metric("Perf. Totale", f"{m_b[4]*100:.1f}%")
         b2.metric("CAGR", f"{m_b[0]*100:.2f}%")
         b3.metric("Ratio Sharpe", f"{m_b[2]:.2f}")
         b4.metric("Max Drawdown", f"{m_b[3]*100:.1f}%")
         b5.metric("Volatilité", f"{m_b[1]*100:.1f}%")
-        b6.write("") # Vide pour l'alignement
+        b6.write("") 
 
         st.divider()
 
@@ -173,7 +185,6 @@ def run_momentum_pure():
             st.subheader("🔍 Historique des Tickers investis")
             st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-        # --- SIGNAL ---
         st.divider()
         if is_invested:
             st.success(f"✅ ÉTAT ACTUEL : INVESTI | Secteurs sélectionnés : {', '.join(current_top)}")
