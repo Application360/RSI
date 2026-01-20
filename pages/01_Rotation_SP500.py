@@ -21,7 +21,7 @@ def calculate_metrics(returns):
     return cagr, vol, sharpe, drawdown, total_return
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Performance & Historique des Tickers")
+    st.title("🚀 Momentum Pro : Analyse Complète & Historique Tickers")
     
     sectors = ['XLK', 'XLF', 'XLV', 'XLY', 'XLI', 'XLP', 'XLE', 'XLC', 'XLB', 'XLU', 'XLRE']
     
@@ -48,14 +48,13 @@ def run_momentum_pure():
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 60)
         data = yf.download(sectors + ['SPY'], start=margin_start, end=e_date, progress=False)
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
-        # Utilisation de Adj Close pour inclure les dividendes
         closes = data['Adj Close'].ffill() if 'Adj Close' in data.columns else data['Close'].ffill()
         opens = data['Open'].ffill()
         spy_sma = closes['SPY'].rolling(window=sma_p).mean()
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Simulation en cours...'):
+        with st.spinner('Calcul des performances historiques...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
@@ -63,7 +62,7 @@ def run_momentum_pure():
             momentum = monthly_close[sectors].pct_change(lookback)
             
             history = []
-            pos_history = [] # Pour stocker les tickers par période
+            pos_history = [] 
             portfolio_changes = 0
             current_top = []
             is_invested = False 
@@ -84,7 +83,6 @@ def run_momentum_pure():
                 val_sma = spy_sma.iloc[idx_ref]
                 market_is_bull = (price_spy > val_sma) if use_market_timing else True
 
-                # Identification de la rotation
                 if (i - valid_start_idx) % holding_period == 0:
                     scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     new_top = scores.index[:n_top].tolist()
@@ -94,7 +92,6 @@ def run_momentum_pure():
                         monthly_fees += (num_changes / n_top) * fees_pct
                     current_top = new_top
                     
-                    # Enregistrement des tickers pour l'historique
                     pos_history.append({
                         'Période': dt_now.strftime('%b %Y'),
                         'État': "INVESTI" if market_is_bull else "CASH (Sécurité)",
@@ -126,21 +123,28 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Ma Stratégie'])
         m_b = calculate_metrics(df['S&P 500'])
 
-        # --- DASHBOARD ---
-        st.subheader("📊 Comparaison des Performances")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"### 🔹 Ma Stratégie")
-            mc = st.columns(3)
-            mc[0].metric("Perf. Totale", f"{m_s[4]*100:.1f}%")
-            mc[1].metric("CAGR Net", f"{m_s[0]*100:.2f}%")
-            mc[2].metric("Sharpe", f"{m_s[2]:.2f}")
-        with c2:
-            st.markdown(f"### 🔸 S&P 500")
-            bc = st.columns(3)
-            bc[0].metric("Perf. Totale", f"{m_b[4]*100:.1f}%")
-            bc[1].metric("CAGR", f"{m_b[0]*100:.2f}%")
-            bc[2].metric("Sharpe", f"{m_b[2]:.2f}")
+        # --- DASHBOARD DE MÉTRIQUES ---
+        st.subheader("📊 Métriques de Performance")
+        
+        # Section Ma Stratégie
+        st.markdown("#### 🔹 Ma Stratégie")
+        s1, s2, s3, s4, s5, s6 = st.columns(6)
+        s1.metric("Perf. Totale", f"{m_s[4]*100:.1f}%")
+        s2.metric("CAGR Net", f"{m_s[0]*100:.2f}%")
+        s3.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
+        s4.metric("Max Drawdown", f"{m_s[3]*100:.1f}%")
+        s5.metric("Volatilité", f"{m_s[1]*100:.1f}%")
+        s6.metric("Nb Trades", portfolio_changes)
+
+        # Section S&P 500
+        st.markdown("#### 🔸 S&P 500 (Benchmark)")
+        b1, b2, b3, b4, b5, b6 = st.columns(6)
+        b1.metric("Perf. Totale", f"{m_b[4]*100:.1f}%")
+        b2.metric("CAGR", f"{m_b[0]*100:.2f}%")
+        b3.metric("Ratio Sharpe", f"{m_b[2]:.2f}")
+        b4.metric("Max Drawdown", f"{m_b[3]*100:.1f}%")
+        b5.metric("Volatilité", f"{m_b[1]*100:.1f}%")
+        b6.write("") # Vide pour l'alignement
 
         st.divider()
 
@@ -150,33 +154,34 @@ def run_momentum_pure():
             st.subheader("📈 Performance Cumulée")
             st.line_chart((1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100, color=["#0077b6", "#f39c12"])
         with g2:
-            st.subheader("📉 Drawdown Historique (%)")
+            st.subheader("📉 Risque : Drawdown (%)")
             dd_strat = ((1 + df['Ma Stratégie']).cumprod() / (1 + df['Ma Stratégie']).cumprod().cummax() - 1) * 100
             dd_spy = ((1 + df['S&P 500']).cumprod() / (1 + df['S&P 500']).cumprod().cummax() - 1) * 100
-            st.line_chart(pd.DataFrame({'Ma Stratégie': dd_strat, 'S&P 500': dd_spy, 'Ref -20%': -20}), color=["#0077b6", "#f39c12", "#e74c3c"])
+            st.line_chart(pd.DataFrame({'Ma Stratégie': dd_strat, 'S&P 500': dd_spy, 'Seuil -20%': -20}), color=["#0077b6", "#f39c12", "#e74c3c"])
 
-        # --- NOUVELLE SECTION : HISTORIQUE DES TICKERS ---
+        # --- TABLES ---
         st.divider()
         col_tab1, col_tab2 = st.columns([1, 2])
         
         with col_tab1:
-            st.subheader("📅 Détail Annuel")
+            st.subheader("📅 Détail Annuel & Alpha")
             annual = df[['Ma Stratégie', 'S&P 500']].groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
-            st.table(annual.sort_index(ascending=False).style.format("{:.2%}"))
+            annual['Alpha'] = annual['Ma Stratégie'] - annual['S&P 500']
+            st.table(annual.sort_index(ascending=False).style.format("{:.2%}").applymap(lambda x: 'background-color: #2ecc71; color: white' if x > 0 else '', subset=['Alpha']))
 
         with col_tab2:
             st.subheader("🔍 Historique des Tickers investis")
             st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True, hide_index=True)
 
-        # --- ÉTAT ACTUEL ---
+        # --- SIGNAL ---
         st.divider()
         if is_invested:
-            st.success(f"✅ SIGNAL ACTUEL : INVESTI | Secteurs : {', '.join(current_top)}")
+            st.success(f"✅ ÉTAT ACTUEL : INVESTI | Secteurs sélectionnés : {', '.join(current_top)}")
         else:
-            st.error(f"🛡️ SIGNAL ACTUEL : CASH (S&P 500 sous sa Moyenne Mobile)")
+            st.error(f"🛡️ ÉTAT ACTUEL : CASH (Filtre de tendance actif)")
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Une erreur est survenue : {e}")
 
 if __name__ == "__main__":
     run_momentum_pure()
