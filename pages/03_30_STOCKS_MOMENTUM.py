@@ -23,7 +23,7 @@ def calculate_metrics(returns):
 def run_momentum_pure():
     st.title("🚀 Momentum Pro : Analyse Top 30 Stocks vs S&P 500")
     
-    # Liste des 30 tickers
+    # Remplacement des secteurs par vos 30 tickers
     tickers_list = [
         "NVDA", "GOOGL", "AAPL", "AMZN", "META", "AVGO", "TSLA", "BRK-B", 
         "LLY", "WMT", "JPM", "V", "XOM", "JNJ", "ORCL", "MA", "MU", "COST", 
@@ -32,9 +32,9 @@ def run_momentum_pure():
     
     with st.sidebar:
         st.header("⚙️ Paramètres Stratégie")
-        n_top = st.slider("Nombre d'actions à détenir", 1, 10, 5)
+        n_top = st.slider("Nombre d'actions à détenir", 1, 10, 5) # Augmenté à 10 max vu le panier de 30
         lookback = st.slider("Look-back Momentum (mois)", 1, 12, 6)
-        holding_period = st.slider("Fréquence rotation (mois)", 1, 12, 1)
+        holding_period = st.slider("Fréquence rotation (mois)", 1, 12, 1) # Par défaut 1 mois pour les actions
         fees_pct = st.slider("Frais par transaction (%)", 0.0, 0.5, 0.1, step=0.01) / 100
         
         st.divider()
@@ -50,35 +50,23 @@ def run_momentum_pure():
 
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
+        # On télécharge les 30 tickers + le SPY pour le benchmark/timing
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 60)
         data = yf.download(tickers_list + ['SPY'], start=margin_start, end=e_date, progress=False)
+        if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
         
-        if data.empty: 
-            return pd.DataFrame(), pd.DataFrame(), pd.Series()
-        
-        # Gestion robuste des colonnes Yahoo Finance
-        if isinstance(data.columns, pd.MultiIndex):
-            # On cherche 'Adj Close', sinon 'Close'
-            if 'Adj Close' in data.columns.levels[0]:
-                closes = data['Adj Close'].ffill()
-            else:
-                closes = data['Close'].ffill()
-            opens = data['Open'].ffill()
-        else:
-            closes = data[['Adj Close']].ffill() if 'Adj Close' in data.columns else data[['Close']].ffill()
-            opens = data[['Open']].ffill()
-
-        spy_sma = closes['SPY'].rolling(window=sma_p).mean() if 'SPY' in closes.columns else pd.Series()
+        closes = data['Adj Close'].ffill()
+        opens = data['Open'].ffill()
+        spy_sma = closes['SPY'].rolling(window=sma_p).mean()
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Calcul en cours...'):
+        with st.spinner('Calcul des performances historiques sur le Top 30...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
-            if close_data.empty:
-                st.warning("Aucune donnée téléchargée. Vérifiez votre connexion ou les tickers.")
-                return
+            if close_data.empty: return
 
             monthly_close = close_data.resample('ME').last()
+            # Calcul du momentum sur les tickers uniquement
             momentum = monthly_close[tickers_list].pct_change(lookback)
             
             history = []
@@ -98,16 +86,17 @@ def run_momentum_pure():
                 monthly_fees = 0
                 dt_now = monthly_close.index[i]
                 
-                # Market Timing
+                # Market Timing Logic
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
                 price_spy = close_data['SPY'].iloc[idx_ref]
                 val_sma = spy_sma.iloc[idx_ref]
                 market_is_bull = (price_spy > val_sma) if use_market_timing else True
 
-                # Rotation
+                # Rotation de portefeuille
                 if (i - valid_start_idx) % holding_period == 0:
                     scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     new_top = scores.index[:n_top].tolist()
+                    
                     if is_invested and current_top:
                         num_changes = len([s for s in new_top if s not in current_top])
                         portfolio_changes += num_changes
@@ -116,10 +105,11 @@ def run_momentum_pure():
                     
                     pos_history.append({
                         'Période': dt_now.strftime('%b %Y'),
-                        'État': "INVESTI" if market_is_bull else "CASH",
+                        'État': "INVESTI" if market_is_bull else "CASH (Sécurité)",
                         'Actions': ", ".join(current_top) if market_is_bull else "---"
                     })
 
+                # Gestion Entrée/Sortie Cash
                 if market_is_bull and not is_invested:
                     is_invested = True
                     portfolio_changes += len(current_top)
@@ -129,11 +119,15 @@ def run_momentum_pure():
                     portfolio_changes += len(current_top)
                     monthly_fees += fees_pct
 
+                # Calcul des rendements
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
+                    
+                    # Rendement moyen des n actions sélectionnées
                     gross_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top if is_invested else 0.0
+                    
                     history.append({
                         'Date': monthly_close.index[i+1], 
                         'Ma Stratégie': gross_ret - monthly_fees, 
@@ -145,23 +139,62 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Ma Stratégie'])
         m_b = calculate_metrics(df['S&P 500'])
 
-        # --- Dashboard ---
-        st.subheader("📊 Performance Top 30")
-        col_s, col_b = st.columns(2)
-        with col_s:
-            st.markdown("**🔹 Ma Stratégie**")
-            st.write(f"Perf: {m_s[4]*100:.1f}% | CAGR: {m_s[0]*100:.1f}% | Sharpe: {m_s[2]:.2f}")
-        with col_b:
-            st.markdown("**🔸 S&P 500**")
-            st.write(f"Perf: {m_b[4]*100:.1f}% | CAGR: {m_b[0]*100:.1f}% | Sharpe: {m_b[2]:.2f}")
-
-        st.line_chart((1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100)
+        # --- DASHBOARD ---
+        st.subheader("📊 Métriques de Performance (Panier 30 Actions)")
         
-        st.subheader("🔍 Historique des positions")
-        st.table(pd.DataFrame(pos_history).tail(10))
+        st.markdown("#### 🔹 Ma Stratégie")
+        s1, s2, s3, s4, s5, s6 = st.columns(6)
+        s1.metric("Perf. Totale", f"{m_s[4]*100:.1f}%")
+        s2.metric("CAGR Net", f"{m_s[0]*100:.2f}%")
+        s3.metric("Ratio Sharpe", f"{m_s[2]:.2f}")
+        s4.metric("Max Drawdown", f"{m_s[3]*100:.1f}%")
+        s5.metric("Volatilité", f"{m_s[1]*100:.1f}%")
+        s6.metric("Nb Trades", portfolio_changes)
+
+        st.markdown("#### 🔸 S&P 500 (Benchmark)")
+        b1, b2, b3, b4, b5, b6 = st.columns(6)
+        b1.metric("Perf. Totale", f"{m_b[4]*100:.1f}%")
+        b2.metric("CAGR", f"{m_b[0]*100:.2f}%")
+        b3.metric("Ratio Sharpe", f"{m_b[2]:.2f}")
+        b4.metric("Max Drawdown", f"{m_b[3]*100:.1f}%")
+        b5.metric("Volatilité", f"{m_b[1]*100:.1f}%")
+
+        st.divider()
+
+        # --- GRAPHIQUES ---
+        g1, g2 = st.columns(2)
+        with g1:
+            st.subheader("📈 Performance Cumulée")
+            st.line_chart((1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100, color=["#0077b6", "#f39c12"])
+        with g2:
+            st.subheader("📉 Risque : Drawdown (%)")
+            dd_strat = ((1 + df['Ma Stratégie']).cumprod() / (1 + df['Ma Stratégie']).cumprod().cummax() - 1) * 100
+            dd_spy = ((1 + df['S&P 500']).cumprod() / (1 + df['S&P 500']).cumprod().cummax() - 1) * 100
+            st.line_chart(pd.DataFrame({'Ma Stratégie': dd_strat, 'S&P 500': dd_spy, 'Seuil -20%': -20}), color=["#0077b6", "#f39c12", "#e74c3c"])
+
+        # --- TABLES ---
+        st.divider()
+        col_tab1, col_tab2 = st.columns([1, 2])
+        
+        with col_tab1:
+            st.subheader("📅 Détail Annuel")
+            annual = df[['Ma Stratégie', 'S&P 500']].groupby(df.index.year).apply(lambda x: (1 + x).prod() - 1)
+            annual['Alpha'] = annual['Ma Stratégie'] - annual['S&P 500']
+            st.table(annual.sort_index(ascending=False).style.format("{:.2%}").applymap(lambda x: 'background-color: #2ecc71; color: white' if x > 0 else '', subset=['Alpha']))
+
+        with col_tab2:
+            st.subheader("🔍 Historique des Actions investies")
+            st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True, hide_index=True)
+
+        # --- SIGNAL ---
+        st.divider()
+        if is_invested:
+            st.success(f"✅ ÉTAT ACTUEL : INVESTI | Actions sélectionnées : {', '.join(current_top)}")
+        else:
+            st.error(f"🛡️ ÉTAT ACTUEL : CASH (Filtre de tendance actif)")
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Une erreur est survenue : {e}")
 
 if __name__ == "__main__":
     run_momentum_pure()
