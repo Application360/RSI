@@ -55,7 +55,7 @@ def run_momentum_pure():
         
         st.divider()
         st.header("📅 Période Historique")
-        # Extension de la période jusqu'à 1980
+        # Extension de la période jusqu'à 1960
         min_hist = date(1960, 1, 1)
         start_date = st.date_input("Début", value=date(1990, 1, 1), min_value=min_hist)
         end_date = st.date_input("Fin", value=date.today(), min_value=min_hist)
