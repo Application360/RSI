@@ -20,173 +20,146 @@ def calculate_metrics(returns, portfolio_changes=None):
     cum_rets = (returns + 1).cumprod()
     drawdown = (cum_rets / cum_rets.cummax() - 1).min()
     
-    metrics = {
+    return {
         "Performance Totale": f"{total_return * 100:.2f}%",
         "CAGR (Annuel)": f"{cagr * 100:.2f}%",
         "Max Drawdown": f"{drawdown * 100:.2f}%",
         "Volatilité": f"{vol * 100:.2f}%",
         "Ratio de Sharpe": f"{sharpe:.2f}",
+        "Transactions": str(portfolio_changes)
     }
-    if portfolio_changes is not None:
-        metrics["Nombre de Transactions"] = str(portfolio_changes)
-    
-    return metrics
 
-def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Univers Dynamique (Anti-Biais de Survie)")
-    st.markdown("""
-    Cette version utilise un **Univers Élargi (70+ titres)** incluant les leaders des années 80, 90 et 2000. 
-    Le script ne sélectionne que les titres cotés au moment de l'analyse.
-    """)
+def main():
+    st.title("🚀 Momentum Pro : Univers Anti-Biais")
+    st.markdown("Inclusion de **Newmont (NEM)** et **AppLovin (APP)**.")
     
-    # Univers élargi pour simuler un marché réaliste sur 40 ans
-    extended_universe = [
-        # Tech & Croissance
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "INTC", "CSCO", "ORCL", "IBM", "HPQ", "TXN", "AMD", "MU", "NFLX", "TSLA", "ADBE", "CRM", "PLTR", "AVGO",
-        # Finance
+    # Univers de 70+ valeurs mixant époques et secteurs
+    universe = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "INTC", "CSCO", "ORCL", "IBM", 
+        "HPQ", "TXN", "AMD", "MU", "NFLX", "TSLA", "ADBE", "CRM", "PLTR", "AVGO", "APP",
         "JPM", "BAC", "GS", "MS", "AXP", "V", "MA", "WFC", "C", "BRK-B",
-        # Industrie & Énergie
-        "GE", "XOM", "CVX", "CAT", "BA", "MMM", "HON", "LMT", "DE", "F", "GM", "XOM",
-        # Consommation & Santé
-        "WMT", "KO", "PEP", "PG", "JNJ", "PFE", "LLY", "UNH", "ABBV", "MRK", "AMGN", "COST", "TGT", "HD", "MCD", "NKE", "DIS", "PM", "MO", "SBUX", "LOW",
-        # Télécoms & Services
-        "T", "VZ", "UPS", "FDX"
+        "GE", "XOM", "CVX", "CAT", "BA", "MMM", "HON", "LMT", "DE", "F", "GM",
+        "WMT", "KO", "PEP", "PG", "JNJ", "PFE", "LLY", "UNH", "ABBV", "MRK", "AMGN", 
+        "COST", "TGT", "HD", "MCD", "NKE", "DIS", "PM", "MO", "NEM",
+        "T", "VZ", "UPS", "FDX", "SBUX", "LOW"
     ]
-    extended_universe = list(set(extended_universe)) # Supprimer doublons éventuels
+    universe = list(set(universe))
 
     with st.sidebar:
-        st.header("⚙️ Paramètres Stratégie")
-        n_top = st.slider("Nombre d'actions à détenir", 1, 15, 5)
-        lookback = st.slider("Look-back Momentum (mois)", 1, 12, 6)
-        holding_period = st.slider("Fréquence rotation (mois)", 1, 12, 1)
+        st.header("⚙️ Paramètres")
+        n_top = st.slider("Actions à détenir", 1, 15, 5)
+        lookback = st.slider("Look-back (mois)", 1, 12, 6)
+        holding_period = st.slider("Rotation (mois)", 1, 12, 1)
         fees_pct = st.slider("Frais par transaction (%)", 0.0, 0.5, 0.1, step=0.01) / 100
         
         st.divider()
         st.header("🛡️ Market Timing")
-        use_market_timing = st.checkbox("Activer le filtre de tendance", value=True)
-        sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 200, disabled=not use_market_timing)
+        use_market_timing = st.checkbox("Filtre SMA 200 S&P 500", value=True)
         
         st.divider()
-        st.header("📅 Période Historique")
-        min_hist = date(1960, 1, 1)
-        today = date.today()
-        start_date = st.date_input("Début", value=date(1990, 1, 1), min_value=min_hist, max_value=today)
-        end_date = st.date_input("Fin", value=today, min_value=min_hist, max_value=today)
+        st.header("📅 Période")
+        start_date = st.date_input("Début", value=date(1995, 1, 1), min_value=date(1960, 1, 1))
+        end_date = st.date_input("Fin", value=date.today())
 
     @st.cache_data
-    def load_data(s_date, e_date, lb_period, sma_p):
-        margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 100)
-        data = yf.download(extended_universe + ['^GSPC'], start=margin_start, end=e_date, progress=False)
+    def load_data(s_date, e_date):
+        # Marge pour calcul SMA et Momentum
+        margin = pd.to_datetime(s_date) - pd.DateOffset(days=400)
+        data = yf.download(universe + ['^GSPC'], start=margin, end=e_date, progress=False)
         
-        if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
-        
-        if isinstance(data.columns, pd.MultiIndex):
-            closes = data['Adj Close'].ffill() if 'Adj Close' in data.columns.levels[0] else data['Close'].ffill()
-            opens = data['Open'].ffill()
+        # Gestion robuste du MultiIndex Yahoo Finance
+        if 'Adj Close' in data.columns:
+            closes = data['Adj Close']
         else:
-            closes = data[['Adj Close']].ffill() if 'Adj Close' in data.columns else data[['Close']].ffill()
-            opens = data[['Open']].ffill()
-
-        spy_sma = closes['^GSPC'].rolling(window=sma_p).mean() if '^GSPC' in closes.columns else pd.Series()
-        return closes, opens, spy_sma
+            closes = data['Close']
+            
+        opens = data['Open']
+        return closes.ffill(), opens.ffill()
 
     try:
-        with st.spinner('Chargement de l\'univers élargi...'):
-            close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
-            if close_data.empty: return
-
-            monthly_close = close_data.resample('ME').last()
-            momentum = monthly_close[extended_universe].pct_change(lookback)
+        with st.spinner('Analyse du marché...'):
+            close_data, open_data = load_data(start_date, end_date)
             
-            history = []
-            pos_history = [] 
-            is_invested = False 
-            current_top = []
-            portfolio_changes = 0
+            # Indicateurs
+            spy_sma = close_data['^GSPC'].rolling(window=200).mean()
+            monthly_close = close_data.resample('ME').last()
+            momentum = monthly_close[universe].pct_change(lookback)
+            
+            history, pos_history = [], []
+            is_invested, current_top, portfolio_changes = False, [], 0
             
             start_dt = pd.to_datetime(start_date)
-            valid_idx = [i for i, idx in enumerate(monthly_close.index) if idx >= start_dt and i >= lookback]
-            
-            if not valid_idx:
-                st.error("Données insuffisantes.")
-                return
+            valid_months = [m for m in monthly_close.index if m >= start_dt]
 
-            for i in range(valid_idx[0], len(monthly_close) - 1):
-                dt_now = monthly_close.index[i]
-                monthly_fees = 0.0 
+            for i in range(len(valid_months) - 1):
+                dt_now = valid_months[i]
+                dt_next = valid_months[i+1]
+                monthly_fees = 0.0
                 
-                idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
-                market_is_bull = (close_data['^GSPC'].iloc[idx_ref] > spy_sma.iloc[idx_ref]) if use_market_timing else True
+                # Market Timing
+                market_is_bull = (close_data['^GSPC'].loc[dt_now] > spy_sma.loc[dt_now]) if use_market_timing else True
 
                 # Rotation
-                if (i - valid_idx[0]) % holding_period == 0:
-                    # On filtre dynamiquement les actions qui n'existent pas encore
-                    # Une action doit avoir un prix non-nul au début et à la fin de la période de momentum
-                    valid_universe = momentum.iloc[i].dropna().index.tolist()
-                    available_scores = momentum.iloc[i][valid_universe].sort_values(ascending=False)
-                    new_top = available_scores.index[:n_top].tolist()
+                if i % holding_period == 0:
+                    available = momentum.loc[dt_now].dropna().sort_values(ascending=False)
+                    new_top = available.index[:n_top].tolist()
                     
                     if is_invested and current_top:
-                        to_sell = [s for s in current_top if s not in new_top]
-                        to_buy = [s for s in new_top if s not in current_top]
-                        num_transac_rotation = len(to_sell) + len(to_buy)
-                        portfolio_changes += num_transac_rotation
-                        monthly_fees += (num_transac_rotation / n_top) * fees_pct
+                        mvt = len([s for s in new_top if s not in current_top]) + len([s for s in current_top if s not in new_top])
+                        portfolio_changes += mvt
+                        monthly_fees += (mvt / n_top) * fees_pct
                     
                     current_top = new_top
                     pos_history.append({
-                        'Période': dt_now.strftime('%Y-%m'), 
-                        'État': "INVESTI" if market_is_bull and current_top else "CASH", 
-                        'Actifs (N)': len(valid_universe),
-                        'Top Tickers': ", ".join(current_top) if market_is_bull and current_top else "---"
+                        'Date': dt_now.strftime('%Y-%m'),
+                        'Etat': "INVESTI" if market_is_bull else "CASH",
+                        'Tickers': ", ".join(current_top) if market_is_bull else "---"
                     })
 
+                # Frais entrée/sortie totale
                 was_invested = is_invested
                 is_invested = market_is_bull and len(current_top) > 0
-
-                if is_invested and not was_invested:
+                if is_invested != was_invested:
                     portfolio_changes += len(current_top)
-                    monthly_fees += fees_pct 
-                elif not is_invested and was_invested:
-                    portfolio_changes += len(current_top)
-                    monthly_fees += fees_pct 
+                    monthly_fees += fees_pct
 
-                d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
+                # Rendements (Open to Close mensuel)
                 try:
-                    idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
-                    idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
-                    
                     if is_invested:
-                        raw_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / len(current_top)
-                        ret_strat = raw_ret - monthly_fees
+                        # Moyenne des rendements du top
+                        rets = (close_data[current_top].loc[dt_next] / open_data[current_top].loc[dt_now]) - 1
+                        ret_strat = rets.mean() - monthly_fees
                     else:
                         ret_strat = 0.0 - monthly_fees
-                        
-                    ret_bench = (close_data['^GSPC'].iloc[idx_e] / open_data['^GSPC'].iloc[idx_s]) - 1
-                    history.append({'Date': monthly_close.index[i+1], 'Ma Stratégie': ret_strat, 'S&P 500': ret_bench})
+                    
+                    ret_bench = (close_data['^GSPC'].loc[dt_next] / open_data['^GSPC'].loc[dt_now]) - 1
+                    history.append({'Date': dt_next, 'Strat': ret_strat, 'Bench': ret_bench})
                 except: continue
 
-        df = pd.DataFrame(history).set_index('Date')
-        m_s = calculate_metrics(df['Ma Stratégie'], portfolio_changes)
-        m_b = calculate_metrics(df['S&P 500'])
+            if not history:
+                st.error("Données insuffisantes pour cette période.")
+                return
 
-        st.subheader("🏁 Performance Comparative")
-        st.table(pd.DataFrame([m_s, m_b], index=["Stratégie Univers Dynamique", "S&P 500 (^GSPC)"]).T)
+            df_res = pd.DataFrame(history).set_index('Date')
+            
+            # Affichage
+            c1, c2 = st.columns(2)
+            c1.subheader("📊 Ma Stratégie")
+            c1.write(calculate_metrics(df_res['Strat'], portfolio_changes))
+            c2.subheader("📉 S&P 500")
+            c2.write(calculate_metrics(df_res['Bench']))
 
-        st.subheader("📈 Évolution Logarithmique")
-        cum_data = (1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['Ma Stratégie'], name="Stratégie Diversifiée", line=dict(color='#2a9d8f', width=2.5)))
-        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['S&P 500'], name="S&P 500", line=dict(color='#e76f51', width=1.5, dash='dot')))
-        fig.update_layout(yaxis_type="log", template="plotly_white", height=600)
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("🔍 Détails de l'Univers par Période")
-        st.write("Le nombre d'actifs (N) montre combien d'actions de la liste étaient cotées à cette date.")
-        st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df_res.index, y=(1+df_res['Strat']).cumprod(), name="Stratégie"))
+            fig.add_trace(go.Scatter(x=df_res.index, y=(1+df_res['Bench']).cumprod(), name="S&P 500"))
+            fig.update_layout(yaxis_type="log", template="plotly_white", height=500)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.subheader("📜 Journal des positions")
+            st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True)
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur système : {e}")
 
 if __name__ == "__main__":
-    run_momentum_pure()
+    main()
