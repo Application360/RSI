@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import date
 
 # 1. Configuration de la page
-st.set_page_config(page_title="Momentum Analytics Pro - Top 30 Stocks", layout="wide")
+st.set_page_config(page_title="Momentum Analytics Pro - Historical Top 30", layout="wide")
 
 def calculate_metrics(returns, portfolio_changes=None):
     if returns.empty:
@@ -22,20 +22,18 @@ def calculate_metrics(returns, portfolio_changes=None):
     
     metrics = {
         "Performance Totale": f"{total_return * 100:.2f}%",
-        "CAGR (Rendement Annuel)": f"{cagr * 100:.2f}%",
+        "CAGR (Annuel)": f"{cagr * 100:.2f}%",
         "Max Drawdown": f"{drawdown * 100:.2f}%",
         "Volatilité": f"{vol * 100:.2f}%",
         "Ratio de Sharpe": f"{sharpe:.2f}",
     }
     if portfolio_changes is not None:
         metrics["Nombre de Transactions"] = str(portfolio_changes)
-    else:
-        metrics["Nombre de Transactions"] = "N/A"
-        
+    
     return metrics
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Top 30 Stocks vs S&P 500")
+    st.title("🚀 Momentum Pro : Stratégie Top 30 (Historique 1980-2026)")
     
     tickers_list = [
         "NVDA", "GOOGL", "AAPL", "AMZN", "META", "AVGO", "TSLA", "BRK-B", 
@@ -56,14 +54,18 @@ def run_momentum_pure():
         sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 200, disabled=not use_market_timing)
         
         st.divider()
-        st.header("📅 Période")
-        start_date = st.date_input("Début", value=date(2018, 1, 1))
-        end_date = st.date_input("Fin", value=date.today())
+        st.header("📅 Période Historique")
+        # Extension de la période jusqu'à 1980
+        min_hist = date(1980, 1, 1)
+        start_date = st.date_input("Début", value=date(1990, 1, 1), min_value=min_hist)
+        end_date = st.date_input("Fin", value=date.today(), min_value=min_hist)
 
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
-        margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 60)
-        data = yf.download(tickers_list + ['SPY'], start=margin_start, end=e_date, progress=False)
+        margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 100)
+        # Note: SPY n'existe que depuis 1993, on utilise ^GSPC (Indice) pour le timing long terme
+        data = yf.download(tickers_list + ['^GSPC'], start=margin_start, end=e_date, progress=False)
+        
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
         
         if isinstance(data.columns, pd.MultiIndex):
@@ -73,15 +75,17 @@ def run_momentum_pure():
             closes = data[['Adj Close']].ffill() if 'Adj Close' in data.columns else data[['Close']].ffill()
             opens = data[['Open']].ffill()
 
-        spy_sma = closes['SPY'].rolling(window=sma_p).mean() if 'SPY' in closes.columns else pd.Series()
+        # Calcul de la SMA sur l'indice S&P 500 (^GSPC)
+        spy_sma = closes['^GSPC'].rolling(window=sma_p).mean() if '^GSPC' in closes.columns else pd.Series()
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Analyse en cours...'):
+        with st.spinner('Téléchargement des données historiques (cela peut prendre un moment)...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
             monthly_close = close_data.resample('ME').last()
+            # Calcul du momentum uniquement sur les actions
             momentum = monthly_close[tickers_list].pct_change(lookback)
             
             history = []
@@ -93,60 +97,71 @@ def run_momentum_pure():
             start_dt = pd.to_datetime(start_date)
             valid_idx = [i for i, idx in enumerate(monthly_close.index) if idx >= start_dt and i >= lookback]
             
+            if not valid_idx:
+                st.error("Données insuffisantes pour cette période.")
+                return
+
             for i in range(valid_idx[0], len(monthly_close) - 1):
                 dt_now = monthly_close.index[i]
+                
+                # Market Timing avec ^GSPC
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
-                market_is_bull = (close_data['SPY'].iloc[idx_ref] > spy_sma.iloc[idx_ref]) if use_market_timing else True
+                market_is_bull = (close_data['^GSPC'].iloc[idx_ref] > spy_sma.iloc[idx_ref]) if use_market_timing else True
 
                 if (i - valid_idx[0]) % holding_period == 0:
-                    new_top = momentum.iloc[i].dropna().sort_values(ascending=False).index[:n_top].tolist()
-                    if is_invested:
+                    # On ne sélectionne que les actions qui ont des données à cette date
+                    available_scores = momentum.iloc[i].dropna().sort_values(ascending=False)
+                    new_top = available_scores.index[:n_top].tolist()
+                    
+                    if is_invested and new_top:
                         changes = len([s for s in new_top if s not in current_top])
                         portfolio_changes += changes
                     current_top = new_top
-                    pos_history.append({'Période': dt_now.strftime('%Y-%m'), 'État': "INVESTI" if market_is_bull else "CASH", 'Tickers': ", ".join(current_top) if market_is_bull else "---"})
+                    
+                    pos_history.append({
+                        'Période': dt_now.strftime('%Y-%m'), 
+                        'État': "INVESTI" if market_is_bull and current_top else "CASH", 
+                        'Tickers': ", ".join(current_top) if market_is_bull and current_top else "---"
+                    })
 
-                if market_is_bull and not is_invested:
-                    is_invested = True
-                    portfolio_changes += len(current_top)
-                elif not market_is_bull and is_invested:
-                    is_invested = False
-                    portfolio_changes += len(current_top)
-
+                is_invested = market_is_bull and len(current_top) > 0
+                
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
-                    ret_strat = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / n_top if is_invested else 0.0
-                    ret_bench = (close_data['SPY'].iloc[idx_e] / open_data['SPY'].iloc[idx_s]) - 1
+                    
+                    if is_invested:
+                        ret_strat = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / len(current_top)
+                    else:
+                        ret_strat = 0.0
+                        
+                    ret_bench = (close_data['^GSPC'].iloc[idx_e] / open_data['^GSPC'].iloc[idx_s]) - 1
                     history.append({'Date': monthly_close.index[i+1], 'Ma Stratégie': ret_strat, 'S&P 500': ret_bench})
                 except: continue
 
         df = pd.DataFrame(history).set_index('Date')
-        
-        # --- Calcul des Métriques Comparatives ---
         m_s = calculate_metrics(df['Ma Stratégie'], portfolio_changes)
         m_b = calculate_metrics(df['S&P 500'])
 
-        comparison_df = pd.DataFrame([m_s, m_b], index=["Ma Stratégie (Top 30)", "S&P 500 (Benchmark)"]).T
+        comparison_df = pd.DataFrame([m_s, m_b], index=["Ma Stratégie", "S&P 500 (^GSPC)"]).T
         
-        st.subheader("🏁 Tableau Comparatif des Performances")
+        st.subheader("🏁 Performance Comparative (Tableau)")
         st.table(comparison_df)
 
-        # --- Graphique Échelle Log ---
         st.subheader("📈 Évolution Portefeuille (Échelle Logarithmique)")
         cum_data = (1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['Ma Stratégie'], name="Ma Stratégie", line=dict(color='#0077b6', width=3)))
-        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['S&P 500'], name="S&P 500", line=dict(color='#f39c12', width=2, dash='dot')))
-        fig.update_layout(yaxis_type="log", template="plotly_white", height=500)
+        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['Ma Stratégie'], name="Ma Stratégie", line=dict(color='#0077b6', width=2)))
+        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['S&P 500'], name="S&P 500", line=dict(color='#f39c12', width=1.5, dash='dot')))
+        fig.update_layout(yaxis_type="log", template="plotly_white", height=600, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("🔍 Historique des Tickers investis")
-        st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True, hide_index=True)
+        st.subheader("🔍 Historique des Tickers")
+        st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True)
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur lors du calcul : {e}")
 
 if __name__ == "__main__":
     run_momentum_pure()
