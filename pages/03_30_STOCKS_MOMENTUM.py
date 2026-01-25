@@ -48,31 +48,16 @@ def run_momentum_pure():
         start_date = st.date_input("Début", value=date(2018, 1, 1), min_value=min_date, max_value=max_date)
         end_date = st.date_input("Fin", value=max_date, min_value=min_date, max_value=max_date)
 
-   @st.cache_data
+    @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
+        # On télécharge les 30 tickers + le SPY pour le benchmark/timing
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 60)
-        # On télécharge avec group_by='column' pour s'assurer de la structure
         data = yf.download(tickers_list + ['SPY'], start=margin_start, end=e_date, progress=False)
+        if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
         
-        if data.empty: 
-            return pd.DataFrame(), pd.DataFrame(), pd.Series()
-        
-        # Correction robuste pour extraire les colonnes
-        if isinstance(data.columns, pd.MultiIndex):
-            # Si Yahoo renvoie un MultiIndex (standard pour plusieurs tickers)
-            closes = data['Adj Close'].ffill() if 'Adj Close' in data.level_0 else data['Close'].ffill()
-            opens = data['Open'].ffill()
-        else:
-            # Cas de secours si un seul ticker ou format plat
-            closes = data[['Adj Close']].ffill() if 'Adj Close' in data.columns else data[['Close']].ffill()
-            opens = data[['Open']].ffill()
-
-        # Sécurité : on s'assure que SPY est présent pour le calcul de la SMA
-        if 'SPY' in closes.columns:
-            spy_sma = closes['SPY'].rolling(window=sma_p).mean()
-        else:
-            spy_sma = pd.Series()
-
+        closes = data['Adj Close'].ffill()
+        opens = data['Open'].ffill()
+        spy_sma = closes['SPY'].rolling(window=sma_p).mean()
         return closes, opens, spy_sma
 
     try:
