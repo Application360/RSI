@@ -48,7 +48,7 @@ def run_momentum_pure():
         "GE", "XOM", "CVX", "CAT", "BA", "MMM", "HON", "LMT", "DE", "F", "GM",
         "WMT", "KO", "PEP", "PG", "JNJ", "PFE", "LLY", "UNH", "ABBV", "MRK", "AMGN", 
         "COST", "TGT", "HD", "MCD", "NKE", "DIS", "PM", "MO", "NEM",
-        "T", "VZ", "UPS", "FDX", "SBUX", "LOW", "ABT", "LRCX", "QCOM", "PGR", "APP", "NEM"
+        "T", "VZ", "UPS", "FDX", "SBUX", "LOW", "ABT", "LRCX", "QCOM", "PGR"
     ]
     extended_universe = list(set(extended_universe))
 
@@ -66,18 +66,17 @@ def run_momentum_pure():
         
         st.divider()
         st.header("📅 Période Historique")
-        start_date = st.date_input("Début", value=date(2005, 1, 1))
+        # --- MODIFICATION ICI : Plage de 1960 à aujourd'hui ---
+        start_date = st.date_input("Début", value=date(1990, 1, 1), min_value=date(1960, 1, 1))
         end_date = st.date_input("Fin", value=date.today())
 
     @st.cache_data
     def load_data(s_date, e_date, sma_p):
-        # Marge pour calcul de la SMA et du momentum initial
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=sma_p + 150)
         data = yf.download(extended_universe + ['^GSPC', 'SHY'], start=margin_start, end=e_date, progress=False)
         
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
         
-        # Gestion du MultiIndex de yfinance
         if isinstance(data.columns, pd.MultiIndex):
             closes = data['Adj Close'].ffill() if 'Adj Close' in data.columns.levels[0] else data['Close'].ffill()
             opens = data['Open'].ffill()
@@ -89,13 +88,12 @@ def run_momentum_pure():
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Chargement des données et calcul du SHY...'):
+        with st.spinner('Chargement des données historiques...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, sma_period)
             if close_data.empty: 
                 st.error("Échec du téléchargement.")
                 return
 
-            # Calcul Momentum Mensuel
             monthly_close = close_data.resample('ME').last()
             momentum = monthly_close[extended_universe].pct_change(lookback)
             
@@ -106,11 +104,10 @@ def run_momentum_pure():
             portfolio_changes = 0
             
             start_dt = pd.to_datetime(start_date)
-            # On commence après la période de lookback nécessaire
             valid_idx = [i for i, idx in enumerate(monthly_close.index) if idx >= start_dt and i >= lookback]
             
             if not valid_idx:
-                st.warning("Période trop courte pour les paramètres sélectionnés.")
+                st.warning("Période trop courte.")
                 return
 
             for i in range(valid_idx[0], len(monthly_close) - 1):
@@ -118,31 +115,28 @@ def run_momentum_pure():
                 dt_next = monthly_close.index[i+1]
                 monthly_fees = 0.0 
                 
-                # Check Market Timing (SMA 200)
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
                 market_is_bull = (close_data['^GSPC'].iloc[idx_ref] > spy_sma.iloc[idx_ref]) if use_market_timing else True
 
-                # --- LOGIQUE LAGGARD (Rotation) ---
+                # --- LOGIQUE LAGGARD & FILTRE EXISTENCE ---
                 if (i - valid_idx[0]) % holding_period == 0:
-                    # On ne regarde que les actions qui ont des données
-                    valid_universe = momentum.iloc[i].dropna().index.tolist()
+                    # Sécurité : on ne garde que les tickers qui ont des prix à cette date
+                    tickers_existants = close_data.iloc[idx_ref][extended_universe].dropna().index.tolist()
+                    valid_universe = [t for t in tickers_existants if t in momentum.columns and not pd.isna(momentum.iloc[i][t])]
+                    
                     scores = momentum.iloc[i][valid_universe].sort_values(ascending=False)
                     new_ranking = scores.index[:n_top].tolist()
                     
                     if current_top:
-                        # On ne vend que si l'action sort du classement Top N
+                        # On ne vend que si l'action sort du classement Top N ou n'existe plus
                         to_sell = [s for s in current_top if s not in new_ranking]
                         to_keep = [s for s in current_top if s in new_ranking]
-                        # On remplace les places vides par les meilleurs du classement non possédés
                         needed = n_top - len(to_keep)
                         to_buy = [s for s in new_ranking if s not in to_keep][:needed]
                         
-                        final_top = to_keep + to_buy
-                        
-                        num_transac = len(to_sell) + len(to_buy)
-                        portfolio_changes += num_transac
-                        monthly_fees += (num_transac / n_top) * fees_pct
-                        current_top = final_top
+                        current_top = to_keep + to_buy
+                        portfolio_changes += (len(to_sell) + len(to_buy))
+                        monthly_fees += ((len(to_sell) + len(to_buy)) / n_top) * fees_pct
                     else:
                         current_top = new_ranking
                         portfolio_changes += len(current_top)
@@ -151,63 +145,52 @@ def run_momentum_pure():
                     pos_history.append({
                         'Période': dt_now.strftime('%Y-%m'), 
                         'État': "INVESTI" if market_is_bull else "CASH (SHY)", 
-                        'Actifs': len(valid_universe),
                         'Holdings': ", ".join(current_top) if market_is_bull else "---"
                     })
 
-                # Gestion des entrées/sorties de marché totales
                 was_invested = is_invested
                 is_invested = market_is_bull and len(current_top) > 0
+                
                 if is_invested != was_invested:
                     portfolio_changes += len(current_top)
                     monthly_fees += fees_pct 
 
-                # Calcul des rendements mensuels
-                # On utilise get_indexer pour éviter les erreurs de jours fériés
                 idx_s = open_data.index.get_indexer([dt_now + pd.Timedelta(days=1)], method='bfill')[0]
                 idx_e = close_data.index.get_indexer([dt_next], method='ffill')[0]
                 
                 if is_invested:
-                    # Performance moyenne des actions du top
-                    raw_ret = close_data[current_top].iloc[idx_e] / open_data[current_top].iloc[idx_s] - 1
-                    ret_strat = raw_ret.mean() - monthly_fees
+                    # Sécurité supplémentaire pour éviter l'erreur Timestamp
+                    available_prices = close_data[current_top].iloc[idx_e].dropna()
+                    if not available_prices.empty:
+                        # On ne calcule que sur les titres ayant survécu à ce mois
+                        actual_holdings = available_prices.index.tolist()
+                        raw_ret = (close_data[actual_holdings].iloc[idx_e] / open_data[actual_holdings].iloc[idx_s] - 1).mean()
+                        ret_strat = raw_ret - monthly_fees
+                    else:
+                        ret_strat = -monthly_fees
                 else:
-                    # --- BOOST CASH MANAGEMENT (SHY) ---
-                    ret_shy = (close_data['SHY'].iloc[idx_e] / open_data['SHY'].iloc[idx_s]) - 1
-                    ret_strat = ret_shy - monthly_fees
+                    # BOOST SHY (Si SHY n'existait pas en 1960, yfinance renvoie NaN, on gère avec 0.0)
+                    shy_perf = (close_data['SHY'].iloc[idx_e] / open_data['SHY'].iloc[idx_s] - 1)
+                    ret_strat = (shy_perf if not pd.isna(shy_perf) else 0.0) - monthly_fees
                 
                 ret_bench = (close_data['^GSPC'].iloc[idx_e] / open_data['^GSPC'].iloc[idx_s]) - 1
                 history.append({'Date': dt_next, 'Ma Stratégie': ret_strat, 'S&P 500': ret_bench})
 
-        # Finalisation des calculs
         df = pd.DataFrame(history).set_index('Date')
-        metrics_s = calculate_metrics(df['Ma Stratégie'], portfolio_changes)
-        metrics_b = calculate_metrics(df['S&P 500'])
-
-        # AFFICHAGE DES RÉSULTATS
         st.subheader("🏁 Performance Comparative")
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.write("**Ma Stratégie (Boostée)**")
-            st.table(pd.Series(metrics_s))
-        with col_m2:
-            st.write("**S&P 500 (^GSPC)**")
-            st.table(pd.Series(metrics_b))
+        st.table(pd.DataFrame([calculate_metrics(df['Ma Stratégie'], portfolio_changes), calculate_metrics(df['S&P 500'])], 
+                            index=["Stratégie Boostée", "S&P 500"]).T)
 
-        st.subheader("📈 Évolution du Capital (Base 100)")
         cum_data = (1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['Ma Stratégie'], name="Stratégie (Laggards + SHY)", line=dict(color='#00d1b2', width=2.5)))
-        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['S&P 500'], name="S&P 500", line=dict(color='#ff3860', width=1.5, dash='dot')))
-        fig.update_layout(yaxis_type="log", template="plotly_white", height=500, margin=dict(l=0, r=0, t=30, b=0))
+        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['Ma Stratégie'], name="Stratégie", line=dict(color='#00d1b2')))
+        fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['S&P 500'], name="S&P 500", line=dict(color='#ff3860', dash='dot')))
+        fig.update_layout(yaxis_type="log", template="plotly_white", height=500)
         st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("🔍 Détails Historiques")
         st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True)
 
     except Exception as e:
-        st.error(f"Une erreur est survenue lors du calcul : {e}")
+        st.error(f"Erreur système : {e}")
 
 if __name__ == "__main__":
     run_momentum_pure()
-      
