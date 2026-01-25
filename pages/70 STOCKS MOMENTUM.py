@@ -48,7 +48,7 @@ def run_momentum_pure():
         "GE", "XOM", "CVX", "CAT", "BA", "MMM", "HON", "LMT", "DE", "F", "GM",
         "WMT", "KO", "PEP", "PG", "JNJ", "PFE", "LLY", "UNH", "ABBV", "MRK", "AMGN", 
         "COST", "TGT", "HD", "MCD", "NKE", "DIS", "PM", "MO", "NEM",
-        "T", "VZ", "UPS", "FDX", "SBUX", "LOW", "ABT", "LRCX", "QCOM", "PGR", "FB"
+        "T", "VZ", "UPS", "FDX", "SBUX", "LOW", "ABT", "LRCX", "QCOM", "PGR"
     ]
     extended_universe = list(set(extended_universe))
 
