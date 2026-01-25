@@ -191,7 +191,4 @@ def run_momentum_pure():
 if __name__ == "__main__":
     run_momentum_pure()
 
-            fig.add_trace(go.Scatter(x=df_res.index, y=(1+df_res['Strat']).cumprod(), name="Stratégie"))
-            fig.add_trace(go.Scatter(x=df_res.index, y=(1+df_res['Bench']).cumprod(), name="S&P 500"))
-            fig.update_layout(yaxis_type="log", template="plotly_white", height=500)
-            st.plotly_chart(fig, use_container_width=True)
+      
