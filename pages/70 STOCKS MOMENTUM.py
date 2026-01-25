@@ -67,7 +67,7 @@ def run_momentum_pure():
         st.divider()
         st.header("📅 Période Historique")
         # --- MODIFICATION ICI : Plage de 1960 à aujourd'hui ---
-        start_date = st.date_input("Début", value=date(1990, 1, 1), min_value=date(1960, 1, 1))
+        start_date = st.date_input("Début", value=date(1960, 1, 1), min_value=date(1960, 1, 1))
         end_date = st.date_input("Fin", value=date.today())
 
     @st.cache_data
