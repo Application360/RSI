@@ -8,9 +8,9 @@ from datetime import date
 # 1. Configuration de la page
 st.set_page_config(page_title="Momentum Analytics Pro - Top 30 Stocks", layout="wide")
 
-def calculate_metrics(returns):
+def calculate_metrics(returns, portfolio_changes=None):
     if returns.empty:
-        return 0, 0, 0, 0, 0
+        return {}
     total_return = (returns + 1).prod() - 1
     days = (returns.index[-1] - returns.index[0]).days
     n_years = max(days / 365.25, 0.1)
@@ -19,10 +19,23 @@ def calculate_metrics(returns):
     sharpe = (cagr) / vol if vol > 0 else 0
     cum_rets = (returns + 1).cumprod()
     drawdown = (cum_rets / cum_rets.cummax() - 1).min()
-    return cagr, vol, sharpe, drawdown, total_return
+    
+    metrics = {
+        "Performance Totale": f"{total_return * 100:.2f}%",
+        "CAGR (Rendement Annuel)": f"{cagr * 100:.2f}%",
+        "Max Drawdown": f"{drawdown * 100:.2f}%",
+        "Volatilité": f"{vol * 100:.2f}%",
+        "Ratio de Sharpe": f"{sharpe:.2f}",
+    }
+    if portfolio_changes is not None:
+        metrics["Nombre de Transactions"] = str(portfolio_changes)
+    else:
+        metrics["Nombre de Transactions"] = "N/A"
+        
+    return metrics
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Analyse Top 30 Stocks vs S&P 500")
+    st.title("🚀 Momentum Pro : Top 30 Stocks vs S&P 500")
     
     tickers_list = [
         "NVDA", "GOOGL", "AAPL", "AMZN", "META", "AVGO", "TSLA", "BRK-B", 
@@ -64,7 +77,7 @@ def run_momentum_pure():
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Calcul des performances...'):
+        with st.spinner('Analyse en cours...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
@@ -75,10 +88,10 @@ def run_momentum_pure():
             pos_history = [] 
             is_invested = False 
             current_top = []
+            portfolio_changes = 0
             
             start_dt = pd.to_datetime(start_date)
-            valid_idx = [i for i, index in enumerate(monthly_close.index) if index >= start_dt and i >= lookback]
-            if not valid_idx: return
+            valid_idx = [i for i, idx in enumerate(monthly_close.index) if idx >= start_dt and i >= lookback]
             
             for i in range(valid_idx[0], len(monthly_close) - 1):
                 dt_now = monthly_close.index[i]
@@ -86,12 +99,21 @@ def run_momentum_pure():
                 market_is_bull = (close_data['SPY'].iloc[idx_ref] > spy_sma.iloc[idx_ref]) if use_market_timing else True
 
                 if (i - valid_idx[0]) % holding_period == 0:
-                    current_top = momentum.iloc[i].dropna().sort_values(ascending=False).index[:n_top].tolist()
-                    pos_history.append({'Date': dt_now.strftime('%Y-%m'), 'État': "INVESTI" if market_is_bull else "CASH", 'Actions': ", ".join(current_top) if market_is_bull else "---"})
+                    new_top = momentum.iloc[i].dropna().sort_values(ascending=False).index[:n_top].tolist()
+                    if is_invested:
+                        changes = len([s for s in new_top if s not in current_top])
+                        portfolio_changes += changes
+                    current_top = new_top
+                    pos_history.append({'Période': dt_now.strftime('%Y-%m'), 'État': "INVESTI" if market_is_bull else "CASH", 'Tickers': ", ".join(current_top) if market_is_bull else "---"})
 
-                is_invested = market_is_bull
+                if market_is_bull and not is_invested:
+                    is_invested = True
+                    portfolio_changes += len(current_top)
+                elif not market_is_bull and is_invested:
+                    is_invested = False
+                    portfolio_changes += len(current_top)
+
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
-                
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
@@ -101,37 +123,27 @@ def run_momentum_pure():
                 except: continue
 
         df = pd.DataFrame(history).set_index('Date')
-        m_s = calculate_metrics(df['Ma Stratégie'])
+        
+        # --- Calcul des Métriques Comparatives ---
+        m_s = calculate_metrics(df['Ma Stratégie'], portfolio_changes)
         m_b = calculate_metrics(df['S&P 500'])
 
-        # --- Dashboard ---
-        st.subheader("📊 Métriques de Performance")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("CAGR Strat", f"{m_s[0]*100:.1f}%", f"{ (m_s[0]-m_b[0])*100:.1f}% Alpha")
-        c2.metric("CAGR S&P 500", f"{m_b[0]*100:.1f}%")
-        c3.metric("Sharpe Strat", f"{m_s[2]:.2f}")
-        c4.metric("Max DD Strat", f"{m_s[3]*100:.1f}%")
+        comparison_df = pd.DataFrame([m_s, m_b], index=["Ma Stratégie (Top 30)", "S&P 500 (Benchmark)"]).T
+        
+        st.subheader("🏁 Tableau Comparatif des Performances")
+        st.table(comparison_df)
 
         # --- Graphique Échelle Log ---
-        st.subheader("📈 Évolution Comparative (Échelle Logarithmique)")
+        st.subheader("📈 Évolution Portefeuille (Échelle Logarithmique)")
         cum_data = (1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100
-        
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['Ma Stratégie'], name="Ma Stratégie", line=dict(color='#0077b6', width=3)))
         fig.add_trace(go.Scatter(x=cum_data.index, y=cum_data['S&P 500'], name="S&P 500", line=dict(color='#f39c12', width=2, dash='dot')))
-        
-        fig.update_layout(
-            yaxis_type="log",
-            yaxis_title="Valeur du portefeuille (Base 100)",
-            xaxis_title="Date",
-            template="plotly_white",
-            height=500,
-            margin=dict(l=0, r=0, t=30, b=0)
-        )
+        fig.update_layout(yaxis_type="log", template="plotly_white", height=500)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("🔍 Dernières Positions")
-        st.dataframe(pd.DataFrame(pos_history).tail(12), use_container_width=True)
+        st.subheader("🔍 Historique des Tickers investis")
+        st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True, hide_index=True)
 
     except Exception as e:
         st.error(f"Erreur : {e}")
