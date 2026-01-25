@@ -46,7 +46,7 @@ def run_momentum_pure():
         # Finance
         "JPM", "BAC", "GS", "MS", "AXP", "V", "MA", "WFC", "C", "BRK-B",
         # Industrie & Énergie
-        "GE", "XOM", "CVX", "CAT", "BA", "MMM", "HON", "LMT", "DE", "F", "GM", "XOM", "NEM"
+        "GE", "XOM", "CVX", "CAT", "BA", "MMM", "HON", "LMT", "DE", "F", "GM", "XOM",
         # Consommation & Santé
         "WMT", "KO", "PEP", "PG", "JNJ", "PFE", "LLY", "UNH", "ABBV", "MRK", "AMGN", "COST", "TGT", "HD", "MCD", "NKE", "DIS", "PM", "MO", "SBUX", "LOW",
         # Télécoms & Services
