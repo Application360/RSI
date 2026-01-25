@@ -65,13 +65,11 @@ def run_momentum_pure():
             value=date(1990, 1, 1), 
             min_value=min_hist, 
             max_value=today
-        )
         end_date = st.date_input(
             "Fin", 
             value=today, 
             min_value=min_hist, 
             max_value=today
-        )
 
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
