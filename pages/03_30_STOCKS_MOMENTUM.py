@@ -55,7 +55,6 @@ def run_momentum_pure():
         
         st.divider()
         st.header("📅 Période Historique")
-        # Extension de la période jusqu'à 1960
         min_hist = date(1960, 1, 1)
         start_date = st.date_input("Début", value=date(1990, 1, 1), min_value=min_hist)
         end_date = st.date_input("Fin", value=date.today(), min_value=min_hist)
@@ -63,7 +62,6 @@ def run_momentum_pure():
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
         margin_start = pd.to_datetime(s_date) - pd.DateOffset(days=max(lb_period * 31, sma_p) + 100)
-        # Note: SPY n'existe que depuis 1993, on utilise ^GSPC (Indice) pour le timing long terme
         data = yf.download(tickers_list + ['^GSPC'], start=margin_start, end=e_date, progress=False)
         
         if data.empty: return pd.DataFrame(), pd.DataFrame(), pd.Series()
@@ -75,17 +73,15 @@ def run_momentum_pure():
             closes = data[['Adj Close']].ffill() if 'Adj Close' in data.columns else data[['Close']].ffill()
             opens = data[['Open']].ffill()
 
-        # Calcul de la SMA sur l'indice S&P 500 (^GSPC)
         spy_sma = closes['^GSPC'].rolling(window=sma_p).mean() if '^GSPC' in closes.columns else pd.Series()
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Téléchargement des données historiques (cela peut prendre un moment)...'):
+        with st.spinner('Analyse en cours...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
             monthly_close = close_data.resample('ME').last()
-            # Calcul du momentum uniquement sur les actions
             momentum = monthly_close[tickers_list].pct_change(lookback)
             
             history = []
@@ -98,43 +94,61 @@ def run_momentum_pure():
             valid_idx = [i for i, idx in enumerate(monthly_close.index) if idx >= start_dt and i >= lookback]
             
             if not valid_idx:
-                st.error("Données insuffisantes pour cette période.")
+                st.error("Données insuffisantes.")
                 return
 
             for i in range(valid_idx[0], len(monthly_close) - 1):
                 dt_now = monthly_close.index[i]
+                monthly_fees = 0.0 # Initialisation des frais pour ce mois
                 
-                # Market Timing avec ^GSPC
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
                 market_is_bull = (close_data['^GSPC'].iloc[idx_ref] > spy_sma.iloc[idx_ref]) if use_market_timing else True
 
+                # Rotation du portefeuille
                 if (i - valid_idx[0]) % holding_period == 0:
-                    # On ne sélectionne que les actions qui ont des données à cette date
                     available_scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     new_top = available_scores.index[:n_top].tolist()
                     
                     if is_invested and new_top:
+                        # Calculer le nombre d'actions qui changent
                         changes = len([s for s in new_top if s not in current_top])
                         portfolio_changes += changes
-                    current_top = new_top
+                        # On applique les frais proportionnellement au nombre de lignes modifiées
+                        monthly_fees += (changes / n_top) * fees_pct
                     
+                    current_top = new_top
                     pos_history.append({
                         'Période': dt_now.strftime('%Y-%m'), 
                         'État': "INVESTI" if market_is_bull and current_top else "CASH", 
                         'Tickers': ", ".join(current_top) if market_is_bull and current_top else "---"
                     })
 
+                # Gestion des entrées/sorties de marché (Market Timing)
+                was_invested = is_invested
                 is_invested = market_is_bull and len(current_top) > 0
-                
+
+                if is_invested and not was_invested:
+                    # Entrée sur le marché : On paie les frais sur tout le portefeuille
+                    portfolio_changes += len(current_top)
+                    monthly_fees += fees_pct
+                elif not is_invested and was_invested:
+                    # Sortie vers Cash : On paie les frais sur tout le portefeuille
+                    portfolio_changes += len(current_top)
+                    monthly_fees += fees_pct
+
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
                     
                     if is_invested:
-                        ret_strat = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / len(current_top)
+                        # Rendement brut
+                        raw_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / len(current_top)
+                        # On soustrait les frais du mois
+                        ret_strat = raw_ret - monthly_fees
                     else:
-                        ret_strat = 0.0
+                        # Si on est en cash, on ne gagne rien mais on peut payer des frais de sortie
+                        ret_strat = 0.0 - monthly_fees
                         
                     ret_bench = (close_data['^GSPC'].iloc[idx_e] / open_data['^GSPC'].iloc[idx_s]) - 1
                     history.append({'Date': monthly_close.index[i+1], 'Ma Stratégie': ret_strat, 'S&P 500': ret_bench})
@@ -144,10 +158,8 @@ def run_momentum_pure():
         m_s = calculate_metrics(df['Ma Stratégie'], portfolio_changes)
         m_b = calculate_metrics(df['S&P 500'])
 
-        comparison_df = pd.DataFrame([m_s, m_b], index=["Ma Stratégie", "S&P 500 (^GSPC)"]).T
-        
         st.subheader("🏁 Performance Comparative (Tableau)")
-        st.table(comparison_df)
+        st.table(pd.DataFrame([m_s, m_b], index=["Ma Stratégie", "S&P 500 (^GSPC)"]).T)
 
         st.subheader("📈 Évolution Portefeuille (Échelle Logarithmique)")
         cum_data = (1 + df[['Ma Stratégie', 'S&P 500']]).cumprod() * 100
@@ -161,7 +173,7 @@ def run_momentum_pure():
         st.dataframe(pd.DataFrame(pos_history).sort_index(ascending=False), use_container_width=True)
 
     except Exception as e:
-        st.error(f"Erreur lors du calcul : {e}")
+        st.error(f"Erreur : {e}")
 
 if __name__ == "__main__":
     run_momentum_pure()
