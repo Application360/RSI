@@ -53,11 +53,25 @@ def run_momentum_pure():
         use_market_timing = st.checkbox("Activer le filtre de tendance", value=True)
         sma_period = st.slider("Moyenne Mobile S&P 500 (jours)", 50, 250, 200, disabled=not use_market_timing)
         
-        st.divider()
+       st.divider()
         st.header("📅 Période Historique")
+        # On définit la borne basse à 1960 et la borne haute à aujourd'hui
         min_hist = date(1960, 1, 1)
-        start_date = st.date_input("Début", value=date(1990, 1, 1), min_value=min_hist)
-        end_date = st.date_input("Fin", value=date.today(), min_value=min_hist)
+        today = date.today()
+        
+        # Modification ici : on s'assure que le curseur peut aller de 1960 à aujourd'hui
+        start_date = st.date_input(
+            "Début", 
+            value=date(1990, 1, 1), 
+            min_value=min_hist, 
+            max_value=today
+        )
+        end_date = st.date_input(
+            "Fin", 
+            value=today, 
+            min_value=min_hist, 
+            max_value=today
+        )
 
     @st.cache_data
     def load_data(s_date, e_date, lb_period, sma_p):
