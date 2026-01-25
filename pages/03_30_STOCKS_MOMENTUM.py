@@ -33,7 +33,7 @@ def calculate_metrics(returns, portfolio_changes=None):
     return metrics
 
 def run_momentum_pure():
-    st.title("🚀 Momentum Pro : Stratégie Top 30 (Historique 1980-2026)")
+    st.title("🚀 Momentum Pro : Stratégie Top 30 (Historique & Frais Réels)")
     
     tickers_list = [
         "NVDA", "GOOGL", "AAPL", "AMZN", "META", "AVGO", "TSLA", "BRK-B", 
@@ -77,7 +77,7 @@ def run_momentum_pure():
         return closes, opens, spy_sma
 
     try:
-        with st.spinner('Analyse en cours...'):
+        with st.spinner('Analyse des données et calcul des frais...'):
             close_data, open_data, spy_sma = load_data(start_date, end_date, lookback, sma_period)
             if close_data.empty: return
 
@@ -99,22 +99,23 @@ def run_momentum_pure():
 
             for i in range(valid_idx[0], len(monthly_close) - 1):
                 dt_now = monthly_close.index[i]
-                monthly_fees = 0.0 # Initialisation des frais pour ce mois
+                monthly_fees = 0.0 
                 
                 idx_ref = spy_sma.index.get_indexer([dt_now], method='ffill')[0]
                 market_is_bull = (close_data['^GSPC'].iloc[idx_ref] > spy_sma.iloc[idx_ref]) if use_market_timing else True
 
-                # Rotation du portefeuille
+                # --- Logique de Rotation ---
                 if (i - valid_idx[0]) % holding_period == 0:
                     available_scores = momentum.iloc[i].dropna().sort_values(ascending=False)
                     new_top = available_scores.index[:n_top].tolist()
                     
-                    if is_invested and new_top:
-                        # Calculer le nombre d'actions qui changent
-                        changes = len([s for s in new_top if s not in current_top])
-                        portfolio_changes += changes
-                        # On applique les frais proportionnellement au nombre de lignes modifiées
-                        monthly_fees += (changes / n_top) * fees_pct
+                    if is_invested and current_top:
+                        to_sell = [s for s in current_top if s not in new_top]
+                        to_buy = [s for s in new_top if s not in current_top]
+                        
+                        num_transac_rotation = len(to_sell) + len(to_buy)
+                        portfolio_changes += num_transac_rotation
+                        monthly_fees += (num_transac_rotation / n_top) * fees_pct
                     
                     current_top = new_top
                     pos_history.append({
@@ -123,31 +124,27 @@ def run_momentum_pure():
                         'Tickers': ", ".join(current_top) if market_is_bull and current_top else "---"
                     })
 
-                # Gestion des entrées/sorties de marché (Market Timing)
+                # --- Logique de Market Timing ---
                 was_invested = is_invested
                 is_invested = market_is_bull and len(current_top) > 0
 
                 if is_invested and not was_invested:
-                    # Entrée sur le marché : On paie les frais sur tout le portefeuille
                     portfolio_changes += len(current_top)
-                    monthly_fees += fees_pct
+                    monthly_fees += fees_pct 
                 elif not is_invested and was_invested:
-                    # Sortie vers Cash : On paie les frais sur tout le portefeuille
                     portfolio_changes += len(current_top)
-                    monthly_fees += fees_pct
+                    monthly_fees += fees_pct 
 
+                # --- Calcul des rendements ---
                 d_start, d_end = monthly_close.index[i] + pd.Timedelta(days=1), monthly_close.index[i+1]
                 try:
                     idx_s = open_data.index.get_indexer([d_start], method='bfill')[0]
                     idx_e = close_data.index.get_indexer([d_end], method='ffill')[0]
                     
                     if is_invested:
-                        # Rendement brut
                         raw_ret = sum((close_data[t].iloc[idx_e] / open_data[t].iloc[idx_s]) - 1 for t in current_top) / len(current_top)
-                        # On soustrait les frais du mois
                         ret_strat = raw_ret - monthly_fees
                     else:
-                        # Si on est en cash, on ne gagne rien mais on peut payer des frais de sortie
                         ret_strat = 0.0 - monthly_fees
                         
                     ret_bench = (close_data['^GSPC'].iloc[idx_e] / open_data['^GSPC'].iloc[idx_s]) - 1
